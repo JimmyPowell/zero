@@ -17,6 +17,9 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { claudeAdapter } from "./claude-adapter";
+import { makeReporter, type Reporter } from "./reporter";
+
 const HEARTBEAT_MS = 20_000;
 const CLAIM_MS = 5_000;
 const PICKER_PORT = 8799; // 本地文件夹选择器（仅 127.0.0.1）
@@ -279,17 +282,20 @@ function buildPrompt(claim: Claim): string {
   return L.join("\n");
 }
 
-// 跑 Claude Code（无头），返回最终文本 + 会话 id
+// 跑 Claude Code（无头，流式）：逐行解析 stream-json，经 adapter 规范化后
+// 通过 reporter 实时上报执行流；返回最终文本 + 会话 id（供 complete 回传）。
 async function runClaude(
   prompt: string,
   cwd: string,
   opts: { model?: string | null; sessionId?: string | null },
+  reporter: Reporter,
 ): Promise<{ ok: boolean; result?: string; sessionId?: string; error?: string }> {
   const cmd = [
     "claude",
     "-p",
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose", // stream-json 配合 -p 必须带 --verbose
     "--dangerously-skip-permissions",
   ];
   if (opts.model) cmd.push("--model", opts.model);
@@ -303,39 +309,64 @@ async function runClaude(
     cwd,
     env: process.env,
   });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
 
-  // claude --output-format json 即使出错也常把结构化结果写在 stdout（最后一行）
-  let parsed:
-    | { result?: string; session_id?: string; is_error?: boolean; subtype?: string }
-    | null = null;
-  try {
-    const last = stdout.trim().split("\n").filter(Boolean).pop() ?? "";
-    parsed = JSON.parse(last);
-  } catch {
-    /* 非 JSON 输出 */
-  }
+  let result: string | undefined;
+  let sessionId: string | undefined;
+  let isError = false;
 
-  if (code !== 0 || parsed?.is_error) {
-    const detail =
-      (parsed?.result && parsed.result.trim()) ||
-      stderr.trim() ||
-      stdout.trim().slice(0, 800) ||
-      `claude exited ${code}`;
-    console.error(
-      `claude 失败 (exit ${code}): ${detail.slice(0, 400)}`,
-    );
-    return { ok: false, error: String(detail).slice(0, 800) };
-  }
-  return {
-    ok: true,
-    result: parsed?.result ?? stdout.slice(0, 4000),
-    sessionId: parsed?.session_id,
+  const handleLine = (line: string) => {
+    let obj: Record<string, any>;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      return; // 非 JSON 行跳过
+    }
+    // 捕获最终结果 / 会话 id
+    if (obj.type === "system" && obj.subtype === "init" && obj.session_id) {
+      sessionId ??= obj.session_id;
+    }
+    if (obj.type === "result") {
+      if (typeof obj.result === "string") result = obj.result;
+      if (obj.session_id) sessionId = obj.session_id;
+      if (obj.is_error) isError = true;
+    }
+    for (const e of claudeAdapter(obj)) {
+      reporter.push(e);
+    }
   };
+
+  // 逐行读 stdout（stream-json 为换行分隔的 JSON）
+  const decoder = new TextDecoder();
+  const reader = proc.stdout.getReader();
+  const stderrPromise = new Response(proc.stderr).text();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (line) handleLine(line);
+    }
+  }
+  if (buffer.trim()) handleLine(buffer.trim());
+
+  const [stderr, code] = await Promise.all([stderrPromise, proc.exited]);
+
+  if (code !== 0 || isError) {
+    const detail =
+      (result && result.trim()) || stderr.trim() || `claude exited ${code}`;
+    console.error(`claude 失败 (exit ${code}): ${detail.slice(0, 400)}`);
+    return {
+      ok: false,
+      result,
+      sessionId,
+      error: String(detail).slice(0, 800),
+    };
+  }
+  return { ok: true, result: result ?? "", sessionId };
 }
 
 let busy = false;
@@ -378,10 +409,16 @@ async function tick(server: string, token: string) {
       return;
     }
     const prompt = buildPrompt(claim);
-    let r = await runClaude(prompt, cwd, {
-      model: claim.agent.model,
-      sessionId: priorSession,
+    // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
+    const reporter = makeReporter(async (events) => {
+      await post(server, token, `/daemon/tasks/${taskId}/events`, { events });
     });
+    let r = await runClaude(
+      prompt,
+      cwd,
+      { model: claim.agent.model, sessionId: priorSession },
+      reporter,
+    );
     // 会话失效（换目录/过期/被删）→ 新会话重跑；上下文已全在 prompt 里，不失忆
     if (
       !r.ok &&
@@ -389,8 +426,14 @@ async function tick(server: string, token: string) {
       /no conversation found|session id/i.test(r.error ?? "")
     ) {
       console.log(`会话 ${priorSession} 失效，改用新会话重跑`);
-      r = await runClaude(prompt, cwd, { model: claim.agent.model });
+      r = await runClaude(
+        prompt,
+        cwd,
+        { model: claim.agent.model },
+        reporter,
+      );
     }
+    await reporter.flush(); // 收尾，确保尾部事件全部送达
     if (r.ok) {
       await post(server, token, `/daemon/tasks/${taskId}/complete`, {
         summary: r.result,

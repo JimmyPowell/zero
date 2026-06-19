@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并实时执行日志（feat/agent-exec-stream → main）🎉
+
+- **功能**：执行过程**实时流式**进时间线浮层 —— provider 无关的 `RunEvent` 协议；daemon `claude-adapter` 解析 `claude -p --output-format stream-json --verbose`，`reporter` 批量按单调 `seq` 上报；server `run_event` 表（`unique(task,seq)` 幂等）+ `run-bus` + SSE 流端点；前端 `RunLogOverlay`（磨砂浮层）+ 详情页运行卡片 / 活动态 3s 轮询。
+- **合并冲突处理**：
+  - `daemon/index.ts` tick —— 合 main 的 `prepareWorkdir`(worktree/就地/空) + 会话回退 与分支的流式 `runClaude(reporter)`：两次 `runClaude`（resume + 回退）都传 reporter。
+  - **seq 归属上移到 `reporter`**（持有单调 `seq` 跨多次 `runClaude`），避免回退重跑撞号被服务端 `unique(task,seq)` 丢弃。
+  - **迁移撞号**：main 与分支都建了 0008（main=issue.work_dir、分支=run_event）。保留 main 的 0008(work_dir)，run_event 重新生成为 **0009**（SQL 与分支逐字节一致）；其 journal `when` 对齐 DB 已应用记录（`1781855231924`）→ `db:migrate` 干净 no-op，不重建已存在的表。
+- **校验**：daemon / server / web typecheck + web build 全过；`db:migrate` no-op。
+
 ## 2026-06-19 · 修复创建时「绑工作目录」不生效
 
 - **根因**：路径只在点小「确定」/回车时才提交绑定；用户用「浏览」填好后直接点创建 → 绑定仍是"不绑" → `workDir` 没发出（DB 里 work_dir 为 NULL）。后端正常，是前端创建流程 bug。

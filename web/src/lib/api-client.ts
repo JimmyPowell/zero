@@ -177,6 +177,60 @@ export interface IssueEvent {
   actor: EventActor | null;
 }
 
+// ---- 执行（run / task）+ 细粒度执行日志 ----
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface RunSummary {
+  taskId: string;
+  status: RunStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  agentAvatar: string | null;
+  provider: AgentProvider | null;
+  runtimeName: string | null;
+  eventCount: number;
+  toolCallCount: number;
+}
+
+// 与 server/daemon 一致的规范化执行事件类型
+export type RunEventType =
+  | "run_status"
+  | "assistant_text"
+  | "thinking"
+  | "tool_call"
+  | "tool_result"
+  | "usage"
+  | "error";
+
+export type RunEventTool =
+  | "read"
+  | "edit"
+  | "write"
+  | "exec"
+  | "search"
+  | "task"
+  | "other";
+
+export interface RunEventRow {
+  id: string;
+  seq: number;
+  type: RunEventType;
+  tool: RunEventTool | null;
+  toolName: string | null;
+  text: string | null;
+  payload?: unknown;
+  createdAt?: string;
+}
+
 export interface UpdateIssuePayload {
   title?: string;
   description?: string | null;
@@ -314,6 +368,38 @@ export const api = {
       `/workspaces/${workspaceId}/issues/${id}/events`,
       { method: "POST", body: { body } },
     ),
+
+  // ---- 执行（run）+ 执行日志 ----
+  listRuns: (workspaceId: string, issueId: string) =>
+    request<{ runs: RunSummary[] }>(
+      `/workspaces/${workspaceId}/issues/${issueId}/runs`,
+    ),
+
+  listRunEvents: (
+    workspaceId: string,
+    issueId: string,
+    taskId: string,
+    after?: number,
+  ) =>
+    request<{ events: RunEventRow[] }>(
+      `/workspaces/${workspaceId}/issues/${issueId}/runs/${taskId}/events${
+        after != null ? `?after=${after}` : ""
+      }`,
+    ),
+
+  // SSE 实时流的完整 URL（EventSource 无法自定义请求头 → token 走查询参数）
+  runStreamUrl: (
+    workspaceId: string,
+    issueId: string,
+    taskId: string,
+    after?: number,
+  ) => {
+    const qs = new URLSearchParams();
+    const token = getToken();
+    if (token) qs.set("access_token", token);
+    if (after != null) qs.set("after", String(after));
+    return `${API_BASE}/workspaces/${workspaceId}/issues/${issueId}/runs/${taskId}/stream?${qs.toString()}`;
+  },
 
   // ---- 仓库 ----
   listRepos: (workspaceId: string) =>
