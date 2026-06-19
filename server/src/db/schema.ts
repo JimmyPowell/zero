@@ -292,6 +292,85 @@ export const runEvent = mysqlTable(
   ],
 );
 
+// 渠道绑定：某用户在某工作空间「在哪收通知」。kind 决定渠道，config 存渠道参数。
+// N1 仅启用 email；枚举先铺全，后续渠道免迁移。
+export const channelBinding = mysqlTable(
+  "channel_binding",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // 群机器人类渠道（wecom/feishu）可不绑定具体用户 → 预留可空
+    userId: char("user_id", { length: 36 }).references(() => user.id, {
+      onDelete: "cascade",
+    }),
+    kind: mysqlEnum("kind", [
+      "email",
+      "telegram",
+      "wecom",
+      "feishu",
+      "webpush",
+    ]).notNull(),
+    // 渠道参数：email {address} / telegram {chatId} / wecom|feishu {webhookUrl} / webpush {endpoint,keys}
+    config: json("config").notNull(),
+    enabled: int("enabled").notNull().default(1), // 1=启用 0=停用
+    // 验证时间：email N1 免验证（创建即视为已验证）；Telegram 走 /start 回填
+    verifiedAt: timestamp("verified_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [
+    unique("uniq_channel_ws_user_kind").on(t.workspaceId, t.userId, t.kind),
+    index("idx_channel_workspace").on(t.workspaceId),
+  ],
+);
+
+// 通知发件箱：每条「要投递到某渠道」的通知先落这里（DB 是真相），
+// worker 周期 flush + 退避重试。绝不「发出去就算」。
+export const notificationOutbox = mysqlTable(
+  "notification_outbox",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // 来源 issue_event（可空：未来非 issue 来源的通知）
+    eventId: char("event_id", { length: 36 }),
+    issueId: char("issue_id", { length: 36 }),
+    bindingId: char("binding_id", { length: 36 })
+      .notNull()
+      .references(() => channelBinding.id, { onDelete: "cascade" }),
+    // 冗余渠道类型，便于 worker 分流 / 查询
+    channel: mysqlEnum("channel", [
+      "email",
+      "telegram",
+      "wecom",
+      "feishu",
+      "webpush",
+    ]).notNull(),
+    subject: text("subject"),
+    body: text("body"),
+    payload: json("payload"), // 渠道特定结构（卡片等）
+    status: mysqlEnum("status", ["pending", "sent", "dead"])
+      .notNull()
+      .default("pending"),
+    attempts: int("attempts").notNull().default(0),
+    maxAttempts: int("max_attempts").notNull().default(5),
+    // 下次投递时间（退避锚点）。worker 取 status=pending AND next_attempt_at<=now。
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    lastError: text("last_error"),
+    // 回控用：外部消息 id ↔ issue 的关联（Telegram 档启用），N1 预留
+    ref: json("ref"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    sentAt: timestamp("sent_at"),
+  },
+  (t) => [
+    index("idx_outbox_pending").on(t.status, t.nextAttemptAt),
+    index("idx_outbox_issue").on(t.issueId),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
@@ -302,3 +381,5 @@ export type Agent = typeof agent.$inferSelect;
 export type Runtime = typeof runtime.$inferSelect;
 export type Task = typeof task.$inferSelect;
 export type RunEvent = typeof runEvent.$inferSelect;
+export type ChannelBinding = typeof channelBinding.$inferSelect;
+export type NotificationOutbox = typeof notificationOutbox.$inferSelect;

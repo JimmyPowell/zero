@@ -13,6 +13,7 @@ import {
 import { getMembership } from "@/lib/access";
 import { enqueueTaskForIssue } from "@/lib/dispatch";
 import { subscribe } from "@/lib/run-bus";
+import { notifyIssueEvent } from "@/lib/notify";
 
 const statusEnum = z.enum([
   "backlog",
@@ -289,6 +290,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     }
 
     const id = crypto.randomUUID();
+    const createdEventId = crypto.randomUUID();
     await db.transaction(async (tx) => {
       const [row] = await tx
         .select({ max: sql<number>`COALESCE(MAX(${schema.issue.number}), 0)` })
@@ -312,7 +314,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         creatorId: sub,
       });
       await tx.insert(schema.issueEvent).values({
-        id: crypto.randomUUID(),
+        id: createdEventId,
         issueId: id,
         workspaceId,
         actorType: "member",
@@ -323,6 +325,9 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
 
     // 指派给 agent 且非 backlog → 派发执行
     await enqueueTaskForIssue(id);
+
+    // 通知：issue 创建（fire-and-forget，不阻塞响应）
+    void notifyIssueEvent({ kind: "created", issueId: id, eventId: createdEventId });
 
     const [created] = await baseIssueQuery()
       .where(eq(schema.issue.id, id))
