@@ -2,6 +2,12 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 出方案：provider-aware 技能挂载 ⏳待办
+
+- **问题**：技能物化只写 `.claude/skills` → 只有 claude/codebuddy 生效，codex/opencode/kimi 不生效。
+- **调研**：`SKILL.md` 是开放标准（跨工具通用），**格式不用改，只有目录不同**：claude/codebuddy=`.claude/skills`、codex=`.agents/skills`、opencode=待确认、kimi=无原生机制。
+- **方案**（见 [`docs/provider-skills-mounting.md`](provider-skills-mounting.md)）：把"技能目录"参数化进 daemon `PROVIDERS` 注册表（`skills: dir/agentsmd/prompt` 策略），SKILL.md 生成器五家共用；kimi 走 AGENTS.md/prompt 兜底。改动小、server/web 零改。待确认 opencode/codebuddy/kimi 三处目录后实现。
+
 ## 2026-06-19 · 合并 CodeBuddy + Kimi 两个 provider（feat/codebuddy-cli + feat/kimi-cli → main）🎉
 
 - **CodeBuddy**(`270d783`)：Claude Code 衍生版、stream-json 同构 → daemon `runClaude` 抽成 `runClaudeLike(bin)` 复用 claudeAdapter；无需代理。迁移重生成为 **0014**(ALTER provider enum 加 codebuddy)。
