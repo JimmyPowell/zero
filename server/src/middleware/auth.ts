@@ -9,9 +9,12 @@ export type AuthEnv = {
 };
 
 // 校验 Authorization: Bearer <token>，注入 c.get("user")
+// SSE/EventSource 无法自定义请求头，故额外允许 ?access_token= 查询参数兜底
 export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
   const header = c.req.header("Authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const token = header.startsWith("Bearer ")
+    ? header.slice(7)
+    : (c.req.query("access_token") ?? "");
   if (!token) {
     return c.json({ error: "未提供认证令牌" }, 401);
   }

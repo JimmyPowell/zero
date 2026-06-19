@@ -235,6 +235,8 @@ export const daemonRoutes = new Hono<DaemonEnv>()
             inArray(schema.issue.status, ["todo", "in_progress"]),
           ),
         );
+      // 通知订阅中的 SSE 立即收尾（否则要等心跳轮询才发现终态）
+      publish(id, { __end: true, status: "succeeded" });
       return c.json({ ok: true });
     },
   )
@@ -267,6 +269,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .update(schema.task)
         .set({ status: "failed", finishedAt: new Date(), error: error ?? null })
         .where(eq(schema.task.id, id));
+      publish(id, { __end: true, status: "failed" });
       return c.json({ ok: true });
     },
   );

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, like, or, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { requireAuth } from "@/middleware/auth";
@@ -11,6 +12,7 @@ import {
 } from "@/middleware/workspace";
 import { getMembership } from "@/lib/access";
 import { enqueueTaskForIssue } from "@/lib/dispatch";
+import { subscribe } from "@/lib/run-bus";
 
 const statusEnum = z.enum([
   "backlog",
@@ -535,4 +537,231 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       },
       201,
     );
+  })
+  // 某 issue 的所有执行（run/task）摘要 —— 供运行卡片 + 日志浮层头部统计
+  .get("/:id/runs", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const id = c.req.param("id");
+    const runs = await db
+      .select({
+        taskId: schema.task.id,
+        status: schema.task.status,
+        createdAt: schema.task.createdAt,
+        startedAt: schema.task.startedAt,
+        finishedAt: schema.task.finishedAt,
+        error: schema.task.error,
+        agentId: schema.agent.id,
+        agentName: schema.agent.name,
+        agentAvatar: schema.agent.avatarUrl,
+        provider: schema.agent.provider,
+        runtimeName: schema.runtime.name,
+        eventCount: sql<number>`(SELECT COUNT(*) FROM ${schema.runEvent} WHERE ${schema.runEvent.taskId} = ${schema.task.id})`,
+        toolCallCount: sql<number>`(SELECT COUNT(*) FROM ${schema.runEvent} WHERE ${schema.runEvent.taskId} = ${schema.task.id} AND ${schema.runEvent.type} = 'tool_call')`,
+      })
+      .from(schema.task)
+      .leftJoin(schema.agent, eq(schema.task.agentId, schema.agent.id))
+      .leftJoin(schema.runtime, eq(schema.task.runtimeId, schema.runtime.id))
+      .where(
+        and(
+          eq(schema.task.issueId, id),
+          eq(schema.task.workspaceId, workspaceId),
+        ),
+      )
+      .orderBy(asc(schema.task.createdAt));
+    return c.json({
+      runs: runs.map((r) => ({
+        ...r,
+        eventCount: Number(r.eventCount),
+        toolCallCount: Number(r.toolCallCount),
+      })),
+    });
+  })
+  // 某次 run 的细粒度事件（历史回放）；after 用于增量拉取
+  .get("/:id/runs/:taskId/events", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const id = c.req.param("id");
+    const taskId = c.req.param("taskId");
+    const after = Number(c.req.query("after") ?? -1);
+    const [tk] = await db
+      .select({ id: schema.task.id })
+      .from(schema.task)
+      .where(
+        and(
+          eq(schema.task.id, taskId),
+          eq(schema.task.issueId, id),
+          eq(schema.task.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    if (!tk) return c.json({ error: "运行不存在" }, 404);
+
+    const events = await db
+      .select({
+        id: schema.runEvent.id,
+        seq: schema.runEvent.seq,
+        type: schema.runEvent.type,
+        tool: schema.runEvent.tool,
+        toolName: schema.runEvent.toolName,
+        text: schema.runEvent.text,
+        payload: schema.runEvent.payload,
+        createdAt: schema.runEvent.createdAt,
+      })
+      .from(schema.runEvent)
+      .where(
+        and(
+          eq(schema.runEvent.taskId, taskId),
+          Number.isFinite(after) && after >= 0
+            ? gt(schema.runEvent.seq, after)
+            : undefined,
+        ),
+      )
+      .orderBy(asc(schema.runEvent.seq));
+    return c.json({ events });
+  })
+  // 实时执行流（SSE）：先按 after / Last-Event-ID 从 DB 补齐，再订阅实时；
+  // 心跳保活，task 结束发 end 事件收尾。DB 是真相，断线按 seq 续传不漏不重。
+  .get("/:id/runs/:taskId/stream", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const id = c.req.param("id");
+    const taskId = c.req.param("taskId");
+    const TERMINAL = ["succeeded", "failed", "cancelled"];
+    const [tk] = await db
+      .select({ id: schema.task.id, status: schema.task.status })
+      .from(schema.task)
+      .where(
+        and(
+          eq(schema.task.id, taskId),
+          eq(schema.task.issueId, id),
+          eq(schema.task.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    if (!tk) return c.json({ error: "运行不存在" }, 404);
+
+    return streamSSE(c, async (stream) => {
+      const lastId = c.req.header("Last-Event-ID");
+      let after = Number(c.req.query("after") ?? lastId ?? -1);
+      if (!Number.isFinite(after)) after = -1;
+      let lastSeq = after;
+
+      // 实时事件先入队，待 backlog 发完再放，避免乱序 / 重复
+      // __end 为终态标记（complete/fail 发布），收到即收尾
+      const queue: { seq?: number; __end?: boolean; status?: string }[] = [];
+      let wake: (() => void) | null = null;
+      let closed = false;
+      const unsub = subscribe(taskId, (ev) => {
+        queue.push(ev as { seq: number });
+        wake?.();
+      });
+      c.req.raw.signal.addEventListener("abort", () => {
+        closed = true;
+        wake?.();
+      });
+
+      // 1) 补齐 backlog
+      const backlog = await db
+        .select({
+          id: schema.runEvent.id,
+          seq: schema.runEvent.seq,
+          type: schema.runEvent.type,
+          tool: schema.runEvent.tool,
+          toolName: schema.runEvent.toolName,
+          text: schema.runEvent.text,
+        })
+        .from(schema.runEvent)
+        .where(
+          and(
+            eq(schema.runEvent.taskId, taskId),
+            after >= 0 ? gt(schema.runEvent.seq, after) : undefined,
+          ),
+        )
+        .orderBy(asc(schema.runEvent.seq));
+      for (const ev of backlog) {
+        await stream.writeSSE({
+          id: String(ev.seq),
+          event: "run",
+          data: JSON.stringify(ev),
+        });
+        lastSeq = ev.seq;
+      }
+
+      // 连上时已是终态：排空实时队列后直接收尾，不空挂连接 15s。
+      // （complete 在 reporter.flush() 之后才置终态，故终态时事件必已全部到达）
+      const [initial] = await db
+        .select({ status: schema.task.status })
+        .from(schema.task)
+        .where(eq(schema.task.id, taskId))
+        .limit(1);
+      if (initial && TERMINAL.includes(initial.status)) {
+        while (queue.length) {
+          const ev = queue.shift()!;
+          if (ev.seq != null && ev.seq > lastSeq) {
+            await stream.writeSSE({
+              id: String(ev.seq),
+              event: "run",
+              data: JSON.stringify(ev as Record<string, unknown>),
+            });
+            lastSeq = ev.seq;
+          }
+        }
+        await stream.writeSSE({
+          event: "end",
+          data: JSON.stringify({ status: initial.status, lastSeq }),
+        });
+        unsub();
+        return;
+      }
+
+      try {
+        while (!closed) {
+          // 排空实时队列（跳过 backlog 已发的 seq）
+          while (queue.length) {
+            const ev = queue.shift()!;
+            if (ev.__end) {
+              await stream.writeSSE({
+                event: "end",
+                data: JSON.stringify({ status: ev.status, lastSeq }),
+              });
+              closed = true;
+              break;
+            }
+            if (ev.seq != null && ev.seq > lastSeq) {
+              await stream.writeSSE({
+                id: String(ev.seq),
+                event: "run",
+                data: JSON.stringify(ev),
+              });
+              lastSeq = ev.seq;
+            }
+          }
+          if (closed) break;
+          // 等下一条事件，或 15s 心跳
+          await Promise.race([
+            new Promise<void>((r) => {
+              wake = r;
+              if (queue.length || closed) r();
+            }),
+            stream.sleep(15000),
+          ]);
+          wake = null;
+          if (queue.length === 0 && !closed) {
+            await stream.writeSSE({ event: "ping", data: "1" });
+            const [s] = await db
+              .select({ status: schema.task.status })
+              .from(schema.task)
+              .where(eq(schema.task.id, taskId))
+              .limit(1);
+            if (s && TERMINAL.includes(s.status)) {
+              await stream.writeSSE({
+                event: "end",
+                data: JSON.stringify({ status: s.status, lastSeq }),
+              });
+              break;
+            }
+          }
+        }
+      } finally {
+        unsub();
+      }
+    });
   });
