@@ -15,6 +15,7 @@ const providerEnum = z.enum([
   "codex",
   "opencode",
   "codebuddy",
+  "kimi",
 ]);
 
 const createSchema = z.object({

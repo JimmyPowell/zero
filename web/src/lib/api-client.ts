@@ -248,7 +248,8 @@ export type AgentProvider =
   | "claude_code"
   | "codex"
   | "opencode"
-  | "codebuddy";
+  | "codebuddy"
+  | "kimi";
 
 export interface Agent {
   id: string;

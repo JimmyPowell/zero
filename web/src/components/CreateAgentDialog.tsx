@@ -27,12 +27,14 @@ const PROVIDERS: AgentProvider[] = [
   "codex",
   "opencode",
   "codebuddy",
+  "kimi",
 ];
 export const providerLabel: Record<AgentProvider, string> = {
   claude_code: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
   codebuddy: "CodeBuddy",
+  kimi: "Kimi",
 };
 
 // 各 provider 常用模型建议（低成本优先）；点选即填入。模型框仍可自由输入。
@@ -51,6 +53,7 @@ const modelSuggestions: Record<AgentProvider, string[]> = {
     "gemini-3.1-pro",
     "gpt-5.5",
   ],
+  kimi: [], // 留空用 default_model（裸名报 LLM not set）
 };
 
 export function CreateAgentDialog({

@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并 CodeBuddy + Kimi 两个 provider（feat/codebuddy-cli + feat/kimi-cli → main）🎉
+
+- **CodeBuddy**(`270d783`)：Claude Code 衍生版、stream-json 同构 → daemon `runClaude` 抽成 `runClaudeLike(bin)` 复用 claudeAdapter；无需代理。迁移重生成为 **0014**(ALTER provider enum 加 codebuddy)。
+- **Kimi**：OpenAI-chat 风格 JSONL（和 claude/opencode 都不同）→ 新 `kimiAdapter`；`runKimi`(`kimi --print`，stdin 关、sessionId 从 stderr 抓、读 `~/.kimi/config.toml`、无 usage)；daemon 启动把 `~/.local/bin` 并入 PATH。迁移重生成为 **0015**。
+- **合并要点**：两分支独立改同几处 provider 枚举/PROVIDERS/providerLabel/web 列表 → 取**并集**(claude_code/codex/opencode/codebuddy/kimi)；CreateAgentDialog 的 `modelSuggestions` 给 kimi 补 `[]`(留空用 default_model)。两次撞号迁移都"删分支号 → db:generate 重排"。
+- **provider 全家福**：claude_code / codex / opencode / codebuddy / kimi 五家。adapter 家族 = claude stream-json(claude+codebuddy) · codex 点号 · opencode JSONL · **kimi OpenAI-chat JSONL**(新)。
+- **限制**：kimi 无成本数据(print 模式不吐 token)、暂不接 MCP；技能物化仍只 `.claude/skills`(见 provider-aware skills 待办)。
+- **校验**：server/daemon/web typecheck + db:migrate(两次 ALTER enum) + 真机 e2e。
+
 ## 2026-06-19 · 合并智能体技能（feat/agent-skills → main）🎉
 
 - 合入 Phase C：技能库（CRUD + GitHub 导入）、智能体详情页（属性/技能/系统指令/活动）、agent 加 `description`、daemon 把挂载技能**物化进 worktree `.claude/skills/<slug>/SKILL.md`**（Claude Code 自动发现）。
@@ -16,6 +25,18 @@
 - **需求度**：个人自己 Mac 够用（低）；一旦**云端无头 runtime / 多账号 / 代理路由 / 企业 Bedrock** 就是刚需。
 - **方案已写入 [`docs/agent-credentials.md`](agent-credentials.md)**：per-agent（可选 per-runtime）custom_env，spawn 时 merge env；**差异化 = 加密存（AES-GCM）+ 审计读端点 + 系统键黑名单**（不学 Multica 明文）。改动小（迁移 + 端点 + daemon 一行 merge + 表单）。
 - **状态**：先不做，等要上云端/多账号/代理时再启。
+## 2026-06-19 · 接入 Kimi CLI（feat/kimi-cli 开发记录，未合并）
+
+把 Moonshot 的 **Kimi CLI** 作为独立 provider 接进来（不是"claude 改端点改模型名"，是真的认它这个 agent）。分支 `feat/kimi-cli`（基于 main `9a010a5`），合并由用户来。详见 [kimi-integration.md](./kimi-integration.md)。
+
+- **本机实测**：`uv tool install kimi-cli`（v1.47.0，`~/.local/bin/kimi`）；无头 `kimi --print --output-format stream-json -y -p`；输出是 **OpenAI-chat 风格逐条消息**（`role:assistant/tool` + `tool_calls[].function.arguments`）——与 claude/opencode 都不同，**新写 `kimiAdapter`**。sessionId 在 **stderr**（`kimi -r <id>` 续接）；**此模式不吐 usage/cost**。鉴权：`kimi login`（订阅账号）或 `~/.kimi/config.toml` 写 key（本机用 Kimi Code 国际服 key，模型 `kimi-for-coding`）。
+- **daemon**：新 `kimi-adapter.ts` + `runKimi`（stdin 关、stderr 抓 sessionId、usage 置空）+ `discover()`/`PROVIDERS` 各加 `kimi`（mcp:false）；启动把 `~/.local/bin` 并入 PATH（否则找不到 uv 装的 kimi）。
+- **server**：provider 枚举 + `providerEnum` 加 `kimi`；迁移 **0013_agent_provider_kimi**（加性 MODIFY，dev 库已应用）。
+- **web**：`AgentProvider`/`PROVIDERS`/`providerLabel` 加 `Kimi`。
+- **模型字段坑**：kimi 的 `-m` 要配置里的 model **键**（如 `kimicode/kimi-for-coding`），不是裸名（裸名报 `LLM not set`）；**model 留空即用 default_model**（推荐）。
+- **实测**：adapter 单测 **8/8**；**全链路 e2e 6/6**（真实 daemon 跑真实 `kimi`：命令/输出进 detail、run 成功）；server/daemon/web `tsc` 全过。测试数据已清。
+- **限制**：Kimi 无成本数据（task_usage 空）；MCP 本期未接。
+- **合并提示**：与 `feat/codebuddy-cli` 各自独立改同几处（provider 枚举/`PROVIDERS`/`providerLabel`/AgentProvider，皆加性），迁移 0012(codebuddy)/0013(kimi) 与 main 现 0012(notifications) 同号——合并时需重排迁移号 + 出一条列齐全部 provider 的统一迁移。
 
 ## 2026-06-19 · 合并外部通知 + 设置页 + Telegram 回控（feat/notifications → main）🎉
 

@@ -20,6 +20,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { claudeAdapter } from "./claude-adapter";
 import { codexAdapter } from "./codex-adapter";
 import { opencodeAdapter } from "./opencode-adapter";
+import { kimiAdapter } from "./kimi-adapter";
 import { asText } from "./adapter-util";
 import { makeReporter, type Reporter } from "./reporter";
 
@@ -33,6 +34,16 @@ const WORK_DIR = join(ZERO_DIR, "work"); // 空目录模式
 const REPOS_DIR = join(ZERO_DIR, "repos"); // URL 仓库的源 clone 缓存
 const WORKTREES_DIR = join(ZERO_DIR, "worktrees"); // 每个 issue 一棵 worktree
 const MCP_DIR = join(ZERO_DIR, "mcp"); // 每个 issue 一份 MCP 配置（按需拉上下文）
+
+// 把 ~/.local/bin 并入 PATH：kimi 等经 uv/pipx 装的 CLI 默认落在这，
+// 否则 Bun.which / 子进程 spawn 找不到。幂等。
+{
+  const localBin = join(homedir(), ".local/bin");
+  const parts = (process.env.PATH ?? "").split(":");
+  if (!parts.includes(localBin)) {
+    process.env.PATH = [localBin, process.env.PATH].filter(Boolean).join(":");
+  }
+}
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -78,6 +89,7 @@ function discover(): Record<string, boolean> {
     codex: Bun.which("codex") != null,
     opencode: Bun.which("opencode") != null,
     codebuddy: Bun.which("codebuddy") != null,
+    kimi: Bun.which("kimi") != null,
   };
 }
 
@@ -792,6 +804,69 @@ const runClaude: Runner = (prompt, cwd, opts, reporter) =>
 const runCodebuddy: Runner = (prompt, cwd, opts, reporter) =>
   runClaudeLike("codebuddy", prompt, cwd, opts, reporter);
 
+// 跑 Kimi CLI（无头，流式）：`kimi --print --output-format stream-json`。
+// 事件为 OpenAI-chat 风格逐条消息（见 kimi-adapter）。stdin 关闭防卡。
+// 会话续接走 `-r <id>`；sessionId 不在 stdout —— 从 stderr「kimi -r <id>」抓。
+// 鉴权读 ~/.kimi/config.toml（用户预先 kimi login / 配 key）；此模式不吐 usage。
+async function runKimi(
+  prompt: string,
+  cwd: string,
+  opts: RunOpts,
+  reporter: Reporter,
+): Promise<RunResult> {
+  const cmd = ["kimi", "--print", "--output-format", "stream-json", "-y"];
+  if (opts.model) cmd.push("-m", opts.model);
+  if (opts.sessionId) cmd.push("-r", opts.sessionId);
+  cmd.push("-p", prompt);
+
+  const proc = Bun.spawn({
+    cmd,
+    stdin: "ignore", // 关键：避免 kimi 等待读 stdin
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd,
+    env: process.env,
+  });
+
+  let result = "";
+  await readJsonLines(proc.stdout, (line) => {
+    let o: Record<string, any>;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      return;
+    }
+    // 末条 assistant 字符串 content = 最终回答
+    if (
+      o.role === "assistant" &&
+      typeof o.content === "string" &&
+      o.content.trim()
+    ) {
+      result = o.content;
+    }
+    for (const e of kimiAdapter(o)) reporter.push(e);
+  });
+
+  const [stderr, code] = await Promise.all([
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  // sessionId 在 stderr："To resume this session: kimi -r <uuid>"
+  const sessionId = stderr.match(/kimi -r ([0-9a-fA-F-]{36})/)?.[1];
+  if (code !== 0) {
+    const detail = stderr.trim() || `kimi exited ${code}`;
+    console.error(`kimi 失败 (exit ${code}): ${detail.slice(0, 400)}`);
+    return {
+      ok: false,
+      result: result.trim(),
+      sessionId,
+      error: String(detail).slice(0, 800),
+      usage: null, // kimi print 模式不吐 usage
+    };
+  }
+  return { ok: true, result: result.trim(), sessionId, usage: null };
+}
+
 // provider → runner + 续接失败特征（用于回退新会话）+ 是否注入 MCP 上下文
 const PROVIDERS: Record<
   string,
@@ -818,6 +893,13 @@ const PROVIDERS: Record<
     runner: runCodebuddy,
     sessionInvalid: /no conversation found|session id/i,
     mcp: true,
+  },
+  // Kimi CLI（Moonshot）：OpenAI-chat 风格 stream-json，独立 kimiAdapter；
+  // sessionId 从 stderr 抓、鉴权读 ~/.kimi 配置；暂不注入 MCP（与 codex/opencode 一致）。
+  kimi: {
+    runner: runKimi,
+    sessionInvalid: /session|not found|resume|无效|不存在/i,
+    mcp: false,
   },
 };
 
@@ -865,7 +947,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     const spec = PROVIDERS[provider];
     if (!spec) {
       await post(server, token, `/daemon/tasks/${taskId}/fail`, {
-        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode / codebuddy）`,
+        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode / codebuddy / kimi）`,
       });
       return;
     }

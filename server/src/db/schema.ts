@@ -180,6 +180,7 @@ export const agent = mysqlTable(
       "codex",
       "opencode",
       "codebuddy",
+      "kimi",
     ])
       .notNull()
       .default("claude_code"),

@@ -1,0 +1,1 @@
+ALTER TABLE `agent` MODIFY COLUMN `provider` enum('claude_code','codex','opencode','codebuddy','kimi') NOT NULL DEFAULT 'claude_code';
