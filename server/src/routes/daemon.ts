@@ -32,6 +32,21 @@ const requireRuntimeToken = createMiddleware<DaemonEnv>(async (c, next) => {
 
 const capabilities = z.record(z.boolean()).optional();
 
+// daemon 完成时回传的用量/成本（取自 Claude result 事件）
+const usageSchema = z
+  .object({
+    model: z.string().nullable().optional(),
+    costUsd: z.number().nullable().optional(),
+    inputTokens: z.number().int().optional(),
+    outputTokens: z.number().int().optional(),
+    cacheReadTokens: z.number().int().optional(),
+    cacheWriteTokens: z.number().int().optional(),
+    durationMs: z.number().int().nullable().optional(),
+    numTurns: z.number().int().nullable().optional(),
+  })
+  .nullable()
+  .optional();
+
 export const daemonRoutes = new Hono<DaemonEnv>()
   .use(requireRuntimeToken)
   // daemon 启动：上报能力 + 刷新心跳
@@ -52,10 +67,11 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         runtimeId: rt.id,
         workspaceId: rt.workspaceId,
         name: rt.name,
+        maxConcurrency: rt.maxConcurrency,
       });
     },
   )
-  // 周期心跳
+  // 周期心跳（响应回带最新并发上限，daemon 据此调整并行度）
   .post(
     "/heartbeat",
     zValidator("json", z.object({ capabilities }).partial()),
@@ -69,29 +85,52 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           ...(caps ? { capabilities: caps } : {}),
         })
         .where(eq(schema.runtime.id, rt.id));
-      return c.json({ ok: true });
+      return c.json({ ok: true, maxConcurrency: rt.maxConcurrency });
     },
   )
   // 认领一条排队任务（属于本 runtime），返回装配好的上下文
   .post("/tasks/claim", async (c) => {
     const rt = c.get("runtime");
-    const [cand] = await db
-      .select()
+
+    // 运行时级并发上限：在跑任务数达上限则不再认领（防超额并行）
+    const [cnt] = await db
+      .select({ running: sql<number>`COUNT(*)` })
       .from(schema.task)
       .where(
         and(
           eq(schema.task.runtimeId, rt.id),
-          eq(schema.task.status, "queued"),
+          eq(schema.task.status, "running"),
         ),
+      );
+    if (Number(cnt?.running ?? 0) >= rt.maxConcurrency) {
+      return c.json({ task: null });
+    }
+
+    // 取最旧的若干排队任务，逐条用条件 UPDATE 抢占（并行认领下防重复领取）
+    const cands = await db
+      .select()
+      .from(schema.task)
+      .where(
+        and(eq(schema.task.runtimeId, rt.id), eq(schema.task.status, "queued")),
       )
       .orderBy(asc(schema.task.createdAt))
-      .limit(1);
-    if (!cand) return c.json({ task: null });
+      .limit(5);
 
-    await db
-      .update(schema.task)
-      .set({ status: "running", startedAt: new Date() })
-      .where(and(eq(schema.task.id, cand.id), eq(schema.task.status, "queued")));
+    let cand: (typeof cands)[number] | undefined;
+    for (const t of cands) {
+      const res = await db
+        .update(schema.task)
+        .set({ status: "running", startedAt: new Date() })
+        .where(
+          and(eq(schema.task.id, t.id), eq(schema.task.status, "queued")),
+        );
+      const header = Array.isArray(res) ? res[0] : res;
+      if ((header as { affectedRows?: number })?.affectedRows === 1) {
+        cand = t;
+        break;
+      }
+    }
+    if (!cand) return c.json({ task: null });
 
     // 时间线：开始执行（meta 带 taskId，前端据此把运行卡片连到执行日志）
     await db.insert(schema.issueEvent).values({
@@ -184,7 +223,11 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     "/tasks/:id/complete",
     zValidator(
       "json",
-      z.object({ summary: z.string().optional(), sessionId: z.string().optional() }),
+      z.object({
+        summary: z.string().optional(),
+        sessionId: z.string().optional(),
+        usage: usageSchema,
+      }),
     ),
     async (c) => {
       const rt = c.get("runtime");
@@ -195,7 +238,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .where(and(eq(schema.task.id, id), eq(schema.task.runtimeId, rt.id)))
         .limit(1);
       if (!tk) return c.json({ error: "任务不存在" }, 404);
-      const { summary, sessionId } = c.req.valid("json");
+      const { summary, sessionId, usage } = c.req.valid("json");
 
       if (summary && summary.trim()) {
         await db.insert(schema.issueEvent).values({
@@ -225,6 +268,39 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           sessionId: sessionId ?? tk.sessionId,
         })
         .where(eq(schema.task.id, id));
+
+      // 用量/成本落库（一个 task 一行；重发幂等更新）
+      if (usage) {
+        await db
+          .insert(schema.taskUsage)
+          .values({
+            taskId: tk.id,
+            workspaceId: tk.workspaceId,
+            runtimeId: tk.runtimeId,
+            agentId: tk.agentId,
+            model: usage.model ?? null,
+            costUsd: usage.costUsd != null ? String(usage.costUsd) : null,
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0,
+            cacheReadTokens: usage.cacheReadTokens ?? 0,
+            cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+            durationMs: usage.durationMs ?? null,
+            numTurns: usage.numTurns ?? null,
+          })
+          .onDuplicateKeyUpdate({
+            set: {
+              model: usage.model ?? null,
+              costUsd: usage.costUsd != null ? String(usage.costUsd) : null,
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+              cacheReadTokens: usage.cacheReadTokens ?? 0,
+              cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+              durationMs: usage.durationMs ?? null,
+              numTurns: usage.numTurns ?? null,
+            },
+          });
+      }
+
       // issue 仅在仍处于活动态时推进到评审中
       await db
         .update(schema.issue)
