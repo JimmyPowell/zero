@@ -7,7 +7,8 @@
 - **调研定稿**：对标 Multica 通知能力——它只有站内收件箱 + WebSocket，**对外推送一片空白**（无邮件事件通知 / Telegram / 企业微信 / 飞书 / 移动推送 / 对外 webhook）。Zero 的差异化 = 出墙 + 回控。设计写入 [notifications.md](./notifications.md)。
 - **澄清移动端**：PWA ≠ 客户端（仍是网页引擎渲染网页）；现有 React 不能直接变 RN（逻辑可复用、UI 全重写）；要做原生客户端推荐 **RN + Expo**（同 TS 栈、三端共享类型）。移动端排到最后一档、本阶段不定死。
 - **方向决定**：渠道顺序 **邮件 → 企业微信 → Telegram → 飞书 →（最后）RN App**；先点亮两个通知点 **`created`** + **`run_finished`**；全程预留双向（回控从 Telegram 档起）。
-- **N1 开发中**（独立分支 `feat/notifications` + sibling worktree `~/code/zero-notifications`，不碰 main）：通知骨架（`notifyIssueEvent` + `notification_outbox` + worker 退避重试）+ 邮件 adapter（SMTP/nodemailer，未配凭据时 dev 回退打印）+ 渠道绑定 API。迁移 0010 加 `channel_binding` / `notification_outbox` 两表。
+- **N1 完成并实测**（独立分支 `feat/notifications` + sibling worktree `~/code/zero-notifications`，不碰 main）：通知骨架（`notifyIssueEvent` + `notification_outbox` + worker 退避重试）+ 邮件 adapter（SMTP/nodemailer，未配凭据时 dev 回退打印）+ 渠道绑定 API。迁移 0010 加 `channel_binding` / `notification_outbox` 两表。
+- **真实发信已验证**：配 QQ 邮箱 SMTP（`smtp.qq.com:465`，凭据只在 worktree `server/.env`、gitignore 不入库）→ 触发 `created` + `run_finished` 两个通知点 → 经 outbox 真实发出两封邮件、状态 `sent`，收件箱确认到达。
 
 ## 2026-06-19 · DB 连接钉死 UTC（`timezone=Z`，部署无关）
 
