@@ -29,6 +29,7 @@ const LOG_FILE = join(ZERO_DIR, "daemon.log");
 const WORK_DIR = join(ZERO_DIR, "work"); // 空目录模式
 const REPOS_DIR = join(ZERO_DIR, "repos"); // URL 仓库的源 clone 缓存
 const WORKTREES_DIR = join(ZERO_DIR, "worktrees"); // 每个 issue 一棵 worktree
+const MCP_DIR = join(ZERO_DIR, "mcp"); // 每个 issue 一份 MCP 配置（按需拉上下文）
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -255,6 +256,25 @@ function startPicker() {
 }
 
 // 把服务端装配好的上下文拼成给 agent 的 prompt
+// 写本 issue 的 MCP 配置：注入 Zero 上下文 server，env 带服务端地址 / 运行时令牌 / issueId。
+// 路径按 issue 固定，每跑覆盖；0600 收口（含令牌）。返回配置文件路径供 --mcp-config。
+function writeMcpConfig(server: string, token: string, issueId: string): string {
+  ensureDir(MCP_DIR);
+  const mcpServerPath = new URL("./mcp-context.ts", import.meta.url).pathname;
+  const cfg = {
+    mcpServers: {
+      zero: {
+        command: process.execPath, // bun 自身
+        args: [mcpServerPath],
+        env: { ZERO_SERVER: server, ZERO_TOKEN: token, ZERO_ISSUE_ID: issueId },
+      },
+    },
+  };
+  const path = join(MCP_DIR, `${issueId}.json`);
+  writeFileSync(path, JSON.stringify(cfg), { mode: 0o600 });
+  return path;
+}
+
 // opts.full=false 且在续接会话时只渲染增量评论（旧评论已在会话记忆里）；
 // full=true（新会话首跑 / resume 失败回退新会话）渲染全量，避免失忆。
 export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
@@ -280,6 +300,9 @@ export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
     }
     for (const cm of shown) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
   }
+  L.push(
+    "\nOn-demand context tools (MCP) if the above is insufficient: `zero_older_comments` (earlier comments beyond those shown) and `zero_prior_runs` (past runs' status/outcome on this issue). Prefer the context already given; call these only when you need more.",
+  );
   const work = context?.work;
   if (work?.mode === "repo") {
     L.push(
@@ -302,7 +325,7 @@ export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
 async function runClaude(
   prompt: string,
   cwd: string,
-  opts: { model?: string | null; sessionId?: string | null },
+  opts: { model?: string | null; sessionId?: string | null; mcpConfig?: string },
   reporter: Reporter,
 ): Promise<{ ok: boolean; result?: string; sessionId?: string; error?: string }> {
   const cmd = [
@@ -315,6 +338,8 @@ async function runClaude(
   ];
   if (opts.model) cmd.push("--model", opts.model);
   if (opts.sessionId) cmd.push("--resume", opts.sessionId);
+  // §3.1 注入 Zero 上下文 MCP（按需回拉更深上下文）；skip-permissions 下工具免确认
+  if (opts.mcpConfig) cmd.push("--mcp-config", opts.mcpConfig);
 
   const proc = Bun.spawn({
     cmd,
@@ -425,6 +450,8 @@ async function tick(server: string, token: string) {
     }
     // 续接会话 → 只推增量评论（full=false）；新会话首跑 → 全量（full=true）
     const prompt = buildPrompt(claim, { full: !priorSession });
+    // MCP：给 agent 按需回拉更深上下文（更早评论 / 历史运行）
+    const mcpConfig = writeMcpConfig(server, token, issueId);
     // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
     const reporter = makeReporter(async (events) => {
       await post(server, token, `/daemon/tasks/${taskId}/events`, { events });
@@ -432,7 +459,7 @@ async function tick(server: string, token: string) {
     let r = await runClaude(
       prompt,
       cwd,
-      { model: claim.agent.model, sessionId: priorSession },
+      { model: claim.agent.model, sessionId: priorSession, mcpConfig },
       reporter,
     );
     // 会话失效（换目录/过期/被删）→ 新会话重跑：必须用全量 prompt（新会话无记忆），否则失忆
@@ -445,7 +472,7 @@ async function tick(server: string, token: string) {
       r = await runClaude(
         buildPrompt(claim, { full: true }),
         cwd,
-        { model: claim.agent.model },
+        { model: claim.agent.model, mcpConfig },
         reporter,
       );
     }

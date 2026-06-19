@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · §3.1 混合上下文：push 保底 + MCP 按需拉深
+
+- **目标**：push 把地板（issue+最近评论+work）塞进 prompt，再给 agent 一个 MCP 工具按需回拉"地板之外"的更深上下文 —— 拿到 Multica 那样的扩展性，又不丢 Zero 的确定性。
+- **服务端**（`routes/daemon.ts`，运行时令牌 + 工作空间隔离）：`GET /daemon/issues/:id/comments?before=&limit=`（更早评论，游标分页）、`GET /daemon/issues/:id/runs`（历史运行状态/失败原因）。
+- **daemon**：新增手写 stdio MCP server `src/mcp-context.ts`（`zero_older_comments` / `zero_prior_runs`，凭 env 调上述端点，`import.meta.main` 守卫）；`writeMcpConfig` 按 issue 写 `~/.zero/mcp/<id>.json`(0600)，`runClaude` 加 `--mcp-config`；prompt 提示工具存在、"够用别拉"。
+- **验证**：typecheck 全过；MCP server 独连真端点（initialize/tools/list/两 tools/call 正确、ISO-Z、隔离）；**真机 e2e**：强制用工具 → init 32 个工具(30+2)、agent 调 `mcp__zero__zero_prior_runs` 拿真数据正确作答、tool_call 进时间线。详见 `docs/agent-context-model.md` §5。
+
 ## 2026-06-19 · 上下文增量推送（resume 只推新增评论）+ 模型对比文档
 
 - **文档**：新增 `docs/agent-context-model.md` —— Zero(厚 push) vs Multica(瘦 push + agent 自取) 的上下文模型对比、push/pull 取舍、使用感分析、8 条演进方向（含证据与三方来源）。

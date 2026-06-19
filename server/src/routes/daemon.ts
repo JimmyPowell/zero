@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { createMiddleware } from "hono/factory";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { hashToken } from "@/lib/token";
@@ -131,6 +131,99 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       agent: ag,
       context,
     });
+  })
+  // §3.1 按需拉取：push 地板之外，agent 可经 MCP 工具回拉更深上下文（运行时令牌鉴权 + 工作空间隔离）
+  // 更早的评论（push 窗口之外）。before=ISO 时间游标，正序返回（oldest-first）便于阅读。
+  .get("/issues/:id/comments", async (c) => {
+    const rt = c.get("runtime");
+    const id = c.req.param("id");
+    const [iss] = await db
+      .select({ workspaceId: schema.issue.workspaceId })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, id))
+      .limit(1);
+    if (!iss || iss.workspaceId !== rt.workspaceId)
+      return c.json({ error: "issue 不存在或越权" }, 404);
+    const before = c.req.query("before");
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50), 1), 200);
+    const conds = [
+      eq(schema.issueEvent.issueId, id),
+      eq(schema.issueEvent.kind, "comment"),
+    ];
+    if (before) {
+      const d = new Date(before);
+      if (!Number.isNaN(d.getTime())) conds.push(lt(schema.issueEvent.createdAt, d));
+    }
+    const rows = await db
+      .select({
+        body: schema.issueEvent.body,
+        createdAt: schema.issueEvent.createdAt,
+        actorType: schema.issueEvent.actorType,
+        memberName: schema.user.name,
+        agentName: schema.agent.name,
+      })
+      .from(schema.issueEvent)
+      .leftJoin(
+        schema.user,
+        and(
+          eq(schema.issueEvent.actorType, "member"),
+          eq(schema.issueEvent.actorId, schema.user.id),
+        ),
+      )
+      .leftJoin(
+        schema.agent,
+        and(
+          eq(schema.issueEvent.actorType, "agent"),
+          eq(schema.issueEvent.actorId, schema.agent.id),
+        ),
+      )
+      .where(and(...conds))
+      .orderBy(desc(schema.issueEvent.createdAt))
+      .limit(limit);
+    const comments = rows.reverse().map((r) => ({
+      author: r.agentName ?? r.memberName ?? "system",
+      authorType: r.actorType,
+      body: r.body,
+      createdAt:
+        r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+    }));
+    return c.json({ comments });
+  })
+  // 本 issue 历史运行（状态/起止/失败原因/agent），看过去几轮干了什么、有没有失败
+  .get("/issues/:id/runs", async (c) => {
+    const rt = c.get("runtime");
+    const id = c.req.param("id");
+    const [iss] = await db
+      .select({ workspaceId: schema.issue.workspaceId })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, id))
+      .limit(1);
+    if (!iss || iss.workspaceId !== rt.workspaceId)
+      return c.json({ error: "issue 不存在或越权" }, 404);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 20), 1), 100);
+    const rows = await db
+      .select({
+        status: schema.task.status,
+        error: schema.task.error,
+        createdAt: schema.task.createdAt,
+        startedAt: schema.task.startedAt,
+        finishedAt: schema.task.finishedAt,
+        agentName: schema.agent.name,
+      })
+      .from(schema.task)
+      .leftJoin(schema.agent, eq(schema.task.agentId, schema.agent.id))
+      .where(eq(schema.task.issueId, id))
+      .orderBy(desc(schema.task.createdAt))
+      .limit(limit);
+    const runs = rows.map((r) => ({
+      status: r.status,
+      agent: r.agentName,
+      error: r.error,
+      startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : r.startedAt,
+      finishedAt:
+        r.finishedAt instanceof Date ? r.finishedAt.toISOString() : r.finishedAt,
+    }));
+    return c.json({ runs });
   })
   // 上报执行流：daemon adapter 规范化后的细粒度事件，批量写入 + 实时分发
   .post(

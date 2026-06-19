@@ -40,7 +40,7 @@
 
 ## 3. Zero 的演进方向（按性价比）
 
-1. **混合模型（push 保底 + pull 加深）**：保留厚 push 当地板，再给 agent 一个工具/CLI 按需拉更老评论、关联 issue、上次 run 的 diff。拿到扩展性又不丢确定性。
+1. **混合模型（push 保底 + pull 加深）**（✅ 已实现，见 §5）：保留厚 push 当地板，再给 agent 一个 MCP 工具按需回拉更老评论 / 历史运行。拿到扩展性又不丢确定性。
 2. **resume 时只推增量**（✅ 已实现，见 §4）：会话已记得旧评论，resume 那轮只塞"上次之后的新评论"，而非 20 条全量 → 省 token、去冗余。
 3. **滚动摘要**替代硬截断：超窗口的老评论压成 summary + 最近 N 条原文，避免"第 21 条直接消失"。
 4. **跑动中新评论可见**：派发后到来的评论给运行中 agent 一个信号 / 检查点重拉（push/pull 通病）。
@@ -62,3 +62,18 @@
   - 新会话首跑 / resume 失败回退：`full=true` → 渲染全量"## Conversation so far"。
 
 **安全性**：截止点用 `startedAt` 且 `<` 比较 → 只会多带（冗余安全），绝不漏带 agent 没见过的评论。极端 >20 条历史时，`resumeFromIndex` 基于当前 20 窗口内早于截止点的条数，退化为"窗口内增量"，仍正确。
+
+## 5. §3.1 混合模型 —— 实现说明
+
+**思路**：push 把"地板"（issue + 最近评论 + work）塞进 prompt；再给 agent 一个 **MCP 工具**按需回拉"地板之外"的更深上下文。`--dangerously-skip-permissions` 下 MCP 工具免确认。
+
+**组成**：
+- 服务端（`server/src/routes/daemon.ts`，运行时令牌鉴权 + 工作空间隔离）：
+  - `GET /daemon/issues/:id/comments?before=&limit=` —— push 窗口之外的更早评论（游标分页，正序返回）。
+  - `GET /daemon/issues/:id/runs?limit=` —— 本 issue 历史运行（状态/起止/失败原因/agent）。
+- daemon `src/mcp-context.ts` —— 手写 stdio JSON-RPC MCP server，暴露 `zero_older_comments` / `zero_prior_runs`，凭 env（`ZERO_SERVER`/`ZERO_TOKEN`/`ZERO_ISSUE_ID`）调上述端点；`import.meta.main` 守卫（可被单测 import）。
+- daemon 接线：`writeMcpConfig` 按 issue 写 `~/.zero/mcp/<issueId>.json`（0600，含令牌），`runClaude` 加 `--mcp-config`；prompt 末尾提示有这两个工具、"够用就别拉"。
+
+**验证**：server/daemon typecheck；MCP server 独连真端点（initialize / tools/list / 两个 tools/call 均正确、ISO-Z、工作空间隔离）；**真机 e2e**：强制 agent 用工具 → init 显示 32 个工具（30+2）、agent 调 `mcp__zero__zero_prior_runs` 拿到真数据并正确作答、tool_call 进了执行流时间线。
+
+**边界 / 后续**：当前 2 个工具（更早评论 / 历史运行）；关联 issue 搜索、上次 run 的 diff（repo 模式其实可直接走 git）可作下一批。令牌走 MCP 配置文件 0600；如需更严可改每任务短令牌。
