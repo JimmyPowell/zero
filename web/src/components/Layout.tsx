@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   Search,
   SquarePen,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 
@@ -198,21 +199,39 @@ export function Layout() {
           })}
         </nav>
 
-        {/* 折叠收起按钮 */}
-        <button
-          type="button"
-          title={collapsed ? t("expand") : t("collapse")}
-          onClick={() => setCollapsed((v) => !v)}
-          className="mt-auto flex items-center justify-center gap-1.5 overflow-hidden rounded-[10px] border border-border bg-transparent px-3 py-2.5 text-[13px] whitespace-nowrap text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
-        >
-          <ChevronLeft
+        {/* 底部：设置 + 折叠收起 */}
+        <div className="mt-auto flex flex-col gap-0.5">
+          <NavLink
+            to="/settings"
+            title={collapsed ? t("menu.settings") : undefined}
             className={cn(
-              "size-4 flex-shrink-0 transition-transform duration-200",
-              collapsed && "rotate-180",
+              "flex items-center gap-2.5 overflow-hidden rounded-[10px] py-2.5 text-sm whitespace-nowrap transition-colors",
+              collapsed ? "justify-center px-0" : "px-3",
+              isActive("settings")
+                ? "bg-active-bg font-semibold text-active-fg"
+                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
             )}
-          />
-          {!collapsed && t("collapse")}
-        </button>
+          >
+            <Settings className="size-[18px] flex-shrink-0" />
+            {!collapsed && (
+              <span className="truncate">{t("menu.settings")}</span>
+            )}
+          </NavLink>
+          <button
+            type="button"
+            title={collapsed ? t("expand") : t("collapse")}
+            onClick={() => setCollapsed((v) => !v)}
+            className="flex items-center justify-center gap-1.5 overflow-hidden rounded-[10px] border border-border bg-transparent px-3 py-2.5 text-[13px] whitespace-nowrap text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+          >
+            <ChevronLeft
+              className={cn(
+                "size-4 flex-shrink-0 transition-transform duration-200",
+                collapsed && "rotate-180",
+              )}
+            />
+            {!collapsed && t("collapse")}
+          </button>
+        </div>
       </aside>
 
       {/* 右侧主工作区：白色卡片承载路由视图（高度锁死，滚动交给内部面板） */}

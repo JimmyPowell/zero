@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 通知设置前端页（自助开关邮件通知）
+
+- 新增**「设置」**入口（左侧栏底部，齿轮图标，独立于主菜单）+ `SettingsView`：通知 section 下「邮件」渠道卡片 —— 开关 + 邮箱输入（默认填账号邮箱）+ 保存 + 移除，状态「已开启 · 将发往 xxx」；底部留「更多渠道即将上线」。
+- `api-client` 加 `listChannels/upsertChannel/deleteChannel` + 类型；i18n（zh/en）补 settings.* / menu.settings；路由 `/settings`。
+- **验证**：web `tsc -b` + `vite build` 通过；起服务实测 `/channels` 路由 CRUD（建/同 kind 覆盖改址停用/非法邮箱 400/删/列空）全部正确——即设置页所用路径。
+- 下一步：N2 企业微信群机器人。
+
 ## 2026-06-19 · 通知系统调研 + N1 启动（feat/notifications，worktree）
 
 - **调研定稿**：对标 Multica 通知能力——它只有站内收件箱 + WebSocket，**对外推送一片空白**（无邮件事件通知 / Telegram / 企业微信 / 飞书 / 移动推送 / 对外 webhook）。Zero 的差异化 = 出墙 + 回控。设计写入 [notifications.md](./notifications.md)。

@@ -210,6 +210,27 @@ const messages: Record<Locale, Record<string, string>> = {
     "runtime.token": "令牌",
     "runtime.tokenOnce": "令牌只显示这一次，请妥善保存。",
     "runtime.done": "完成",
+
+    // 设置 / 通知
+    "menu.settings": "设置",
+    "settings.title": "设置",
+    "settings.notifTitle": "通知",
+    "settings.notifDesc":
+      "需求创建、智能体执行完成时，把通知推送到你的渠道。",
+    "settings.notifEvents": "触发时机：需求创建 · 智能体执行完成",
+    "settings.email": "邮件",
+    "settings.emailDesc": "向指定邮箱发送通知邮件。",
+    "settings.emailPh": "接收通知的邮箱",
+    "settings.on": "已开启",
+    "settings.off": "未开启",
+    "settings.willSendTo": "将发往 {addr}",
+    "settings.save": "保存",
+    "settings.saving": "保存中…",
+    "settings.saved": "已保存",
+    "settings.remove": "移除",
+    "settings.removeConfirm": "确定移除邮件通知渠道？",
+    "settings.invalidEmail": "邮箱格式不正确",
+    "settings.moreSoon": "更多渠道（企业微信 / Telegram / 飞书）即将上线",
   },
   en: {
     brand: "Zero",
@@ -408,6 +429,27 @@ const messages: Record<Locale, Record<string, string>> = {
     "runtime.token": "Token",
     "runtime.tokenOnce": "The token is shown only once — keep it safe.",
     "runtime.done": "Done",
+
+    // Settings / notifications
+    "menu.settings": "Settings",
+    "settings.title": "Settings",
+    "settings.notifTitle": "Notifications",
+    "settings.notifDesc":
+      "Push notifications to your channels when an issue is created or an agent finishes.",
+    "settings.notifEvents": "Triggers: issue created · agent run finished",
+    "settings.email": "Email",
+    "settings.emailDesc": "Send notification emails to a chosen address.",
+    "settings.emailPh": "Email to receive notifications",
+    "settings.on": "On",
+    "settings.off": "Off",
+    "settings.willSendTo": "Sends to {addr}",
+    "settings.save": "Save",
+    "settings.saving": "Saving…",
+    "settings.saved": "Saved",
+    "settings.remove": "Remove",
+    "settings.removeConfirm": "Remove the email notification channel?",
+    "settings.invalidEmail": "Invalid email address",
+    "settings.moreSoon": "More channels (WeCom / Telegram / Feishu) coming soon",
   },
 };
 

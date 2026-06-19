@@ -295,6 +295,24 @@ export interface CreateRepoPayload {
   defaultBranch?: string;
 }
 
+// ---- 通知渠道 ----
+export type ChannelKind = "email" | "telegram" | "wecom" | "feishu" | "webpush";
+
+export interface ChannelBinding {
+  id: string;
+  kind: ChannelKind;
+  config: { address?: string } & Record<string, unknown>;
+  enabled: boolean;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+export interface UpsertChannelPayload {
+  kind: "email";
+  address: string;
+  enabled?: boolean;
+}
+
 interface AuthResponse {
   token: string;
   user: AuthUser;
@@ -444,6 +462,23 @@ export const api = {
 
   deleteRuntime: (workspaceId: string, id: string) =>
     request<{ ok: boolean }>(`/workspaces/${workspaceId}/runtimes/${id}`, {
+      method: "DELETE",
+    }),
+
+  // ---- 通知渠道 ----
+  listChannels: (workspaceId: string) =>
+    request<{ channels: ChannelBinding[] }>(
+      `/workspaces/${workspaceId}/channels`,
+    ),
+
+  upsertChannel: (workspaceId: string, payload: UpsertChannelPayload) =>
+    request<{ channel: ChannelBinding }>(
+      `/workspaces/${workspaceId}/channels`,
+      { method: "POST", body: payload },
+    ),
+
+  deleteChannel: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/channels/${id}`, {
       method: "DELETE",
     }),
 };
