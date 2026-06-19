@@ -32,6 +32,7 @@ export const incomingRunEventSchema = z.object({
   tool: z.enum(RUN_TOOLS).nullish(),
   toolName: z.string().max(128).nullish(),
   text: z.string().nullish(),
+  detail: z.string().max(20000).nullish(),
   payload: z.unknown().nullish(),
 });
 export type IncomingRunEvent = z.infer<typeof incomingRunEventSchema>;

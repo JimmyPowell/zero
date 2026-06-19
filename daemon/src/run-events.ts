@@ -23,7 +23,8 @@ export interface RunEvent {
   type: RunEventType;
   tool?: RunTool | null;
   toolName?: string | null;
-  text?: string | null;
+  text?: string | null; // 折叠态摘要（一行）
+  detail?: string | null; // 展开态完整内容（命令/参数/输出/思考/文本）
   payload?: unknown;
 }
 
