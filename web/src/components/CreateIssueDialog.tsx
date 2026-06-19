@@ -32,7 +32,7 @@ export function CreateIssueDialog({
   const { t } = useUi();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<IssueStatus>("todo");
+  const [status, setStatus] = useState<IssueStatus>("in_progress");
   const [priority, setPriority] = useState<IssuePriority>("none");
   const [assignee, setAssignee] = useState<AssigneeValue>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -72,7 +72,7 @@ export function CreateIssueDialog({
   function reset() {
     setTitle("");
     setDescription("");
-    setStatus("todo");
+    setStatus("in_progress");
     setPriority("none");
     setAssignee(null);
     setError(null);

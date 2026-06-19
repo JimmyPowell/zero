@@ -2,6 +2,12 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 评论 Markdown 渲染 + 默认进行中 + 时间线毫秒排序
+
+- **Markdown 渲染**：引入 `react-markdown` + `remark-gfm` + `@tailwindcss/typography`，时间线评论按 Markdown 渲染（标题/粗体/列表/代码/表格…）。新增 `components/Markdown.tsx`。
+- **新建 issue 默认「进行中」**（后端 create 默认 + 创建弹窗默认）。前期固定，后续做成工作空间偏好。
+- **时间线顺序修复**：`issue_event.created_at` 改 `timestamp(3)` + `now(3)` 默认（迁移 0006/0007），同一秒多条事件按毫秒真实排序——修「开始执行排到状态变更前面」。实测同秒 3 事件 .424/.495/.524 排序正确。
+
 ## 2026-06-19 · 修复 daemon 吞错 + 诊断「模型无效」
 
 - 现象：指派 issue 给 agent 后「执行失败：claude exited 1」。**根因**：agent 的「模型」字段被填成无效值 `111`，daemon 传 `--model 111` 被 claude 拒绝（model 不存在）。

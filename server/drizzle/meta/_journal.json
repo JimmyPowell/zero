@@ -43,6 +43,20 @@
       "when": 1781851279972,
       "tag": "0005_eminent_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1781853394118,
+      "tag": "0006_eager_gunslinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1781853445668,
+      "tag": "0007_sharp_devos",
+      "breakpoints": true
     }
   ]
 }

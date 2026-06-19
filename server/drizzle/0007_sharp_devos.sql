@@ -1,0 +1,1 @@
+ALTER TABLE `issue_event` MODIFY COLUMN `created_at` timestamp(3) NOT NULL DEFAULT (now(3));

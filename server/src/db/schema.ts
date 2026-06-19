@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   mysqlTable,
   varchar,
@@ -148,7 +149,10 @@ export const issueEvent = mysqlTable(
     ]).notNull(),
     body: text("body"), // 评论正文（markdown）
     meta: json("meta"), // 结构化负载，如 {from,to}
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    // 毫秒精度，保证同一秒内多条事件按真实顺序排
+    createdAt: timestamp("created_at", { fsp: 3 })
+      .notNull()
+      .default(sql`(now(3))`),
   },
   (t) => [index("idx_issue_event_issue").on(t.issueId, t.createdAt)],
 );

@@ -256,7 +256,8 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         number: next,
         title: body.title,
         description: body.description ?? null,
-        status: body.status ?? "todo",
+        // 默认「进行中」（前期固定，后续做成工作空间偏好）
+        status: body.status ?? "in_progress",
         priority: body.priority ?? "none",
         assigneeType: body.assigneeType ?? null,
         assigneeId: body.assigneeId ?? null,

@@ -1,4 +1,5 @@
 import { ActorAvatar } from "@/components/ActorAvatar";
+import { Markdown } from "@/components/Markdown";
 import { useUi } from "@/lib/ui-store";
 import { relativeTime } from "@/lib/time";
 import { statusMeta, priorityMeta } from "@/lib/issue-meta";
@@ -44,8 +45,8 @@ export function Timeline({ events }: { events: IssueEvent[] }) {
                   </span>
                   <span className="text-xs text-muted-foreground">{time}</span>
                 </div>
-                <div className="mt-1.5 rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                  {ev.body}
+                <div className="mt-1.5 rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground">
+                  <Markdown>{ev.body ?? ""}</Markdown>
                 </div>
               </div>
             </li>
