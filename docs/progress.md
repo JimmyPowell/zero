@@ -2,6 +2,24 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · Phase C：Skill 全链路 C1–C3 实现（feat/agent-skills）✅
+
+> 确认方案后开发：先做 Skill 全链路，工作空间级 skill + 第一版含 GitHub 导入。3 个分阶段 commit，均过 typecheck/build。**未对共享 dev 库执行 migrate**（别人也在用），待用户环境自行 `db:migrate`。
+
+- **C1 数据模型 + 服务端 API** `feat(c1)`：
+  - schema 新增 `skill`（slug/name/description/content/source/source_ref/content_hash）、`skill_file`（path/is_binary/content/storage_key，二进制留 C5）、`agent_skill`（多对多 + position）；`agent` 加 `description`。迁移 `0011_agent_skills`（drizzle-kit 生成，纯加性）。
+  - `routes/skills.ts`：工作空间级 CRUD + `POST /import`（解析 GitHub 链接 → contents API 找 SKILL.md → frontmatter 解析 + 同级文本附件，有界 20 个/256KB）。
+  - `routes/agents.ts`：详情 `GET /:id`（绑定运行时 + 挂载技能 + 30 天用量 + 最近运行）+ `PUT /:id/skills`（整体替换挂载，校验同工作空间）。
+- **C2 前端** `feat(c2)`：
+  - 技能库 `/skills`：列表 + `CreateSkillDialog`（建/编辑，编辑按 id 拉详情载正文）+ `ImportSkillDialog`（GitHub）+ 删除。
+  - 智能体详情页 `/agents/:id`（仿 `RuntimeDetailView`）：头部 + 属性（provider/model/runtime）+ 三 tab（技能挂载·卸载 via `SkillAttachDialog` / 系统指令 / 活动=用量+最近运行）。
+  - `AgentsView` 行可点进详情；`CreateAgentDialog` 加 description；api-client / ui-store(zh+en) / 路由 / 侧栏「技能库」接线。
+- **C3 运行时注入** `feat(c3)`：
+  - claim 用 `loadAgentSkills` 把挂载技能（+文本附件）随 claim 下发。
+  - daemon `materializeSkills`：物化进 `<worktree>/.claude/skills/<slug>/SKILL.md`（frontmatter 由 name/description 合成，库里只存正文）；**manifest 只清自管 slug**（保留用户自带 skill，卸载即消失）；防穿越附件路径；`git rev-parse --git-path info/exclude` 把 `.claude/` 加 exclude 不污染 PR；best-effort 失败不阻断。按 issue 隔离、随 worktree 清理。
+- **校验**：server / web / daemon typecheck 全过；web `vite build` 过。**未跑完整后端/daemon**（共享环境）。详见 `docs/agent-extensibility.md` §9/§10。
+- **下一步**：用户环境 `db:migrate` 应用 0011 + 真机 e2e；之后排 C4（每 agent MCP）/ C5（适配层 + 版本快照 + 二进制 + 插件位）。
+
 ## 2026-06-19 · Phase C 可扩展性：调研 + 方案设计（待确认）📝
 
 - **隔离**：开分支 `feat/agent-skills` / 工作树 `~/code/zero-agent-skills`，调研与设计在树内进行。

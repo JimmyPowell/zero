@@ -1,7 +1,8 @@
 # 智能体管理升级：Skills · MCP · 可扩展性设计
 
-> 状态：**方案设计中（待确认）**。2026-06-19 整理。
+> 状态：**C1–C3（Skill 全链路）已实现**，MCP(C4)/适配层(C5) 待排期。2026-06-19。
 > 隔离开发：分支 `feat/agent-skills` / 工作树 `~/code/zero-agent-skills`。
+> 已确认决策（见 §10）：先做 Skill 全链路 → 工作空间级 skill + 第一版含 GitHub 导入。
 > 一句话：把「智能体 = 系统指令 + 模型 + 运行时」这套**粗糙配置**，升级成「智能体 = 人格(instructions) + **可移植能力包(Skills)** + 工具(MCP) + 运行时」的**能力组合**，并配一个真正的**详情页**来管理它。
 
 ---
@@ -265,12 +266,20 @@ interface ProviderAdapter {
 
 ---
 
-## 10. 待你拍板的开放问题
+## 10. 决策与进展
 
-1. **范围与顺序**：先把 **C1+C2+C3（Skill 全链路）**做完见效，MCP(C4) 下一批？还是要并行推 MCP？（建议：先 Skill，理由见 §1.4）
-2. **技能库归属**：skill 定在**工作空间级**（团队共享、跨 agent）对吧？要不要再留个"账号级私有 skill"概念？（建议：先只做工作空间级，够用且简单）
-3. **导入来源**：C1 先只做"手动新建 skill"，GitHub/registry 导入放 C5？（建议：是）
-4. **二进制附件**：第一版 `skill_file` 是否只支持文本，二进制留到 C5？（建议：是，先文本）
-5. **命名**：分支/工作树叫 `feat/agent-skills`，文档叫 `agent-extensibility.md`，对外能力叫"技能(Skills)"——这套命名 OK 吗？
+**已确认（2026-06-19）：**
+1. **顺序**：先做 **C1+C2+C3（Skill 全链路）**见效，MCP(C4) 下一批。✅ 已实现
+2. **技能库归属**：**工作空间级**（团队共享、跨 agent）；暂不做账号级私有 skill。
+3. **导入来源**：第一版**就做 GitHub 导入**（用户选择）+ 手动新建；registry 留到 C5。✅ 已实现
+4. **二进制附件**：第一版 `skill_file` 只支持文本；二进制（对象存储）留到 C5（schema 已留 `is_binary`/`storage_key`）。
+5. **命名**：分支/工作树 `feat/agent-skills`，文档 `agent-extensibility.md`，对外叫"技能(Skills)"。
 
-> 确认后，我按 §9 的阶段开始，每个阶段过测后本地 commit 并更新 `progress.md`。
+**已落地（feat/agent-skills，3 个 commit，均过 typecheck/build）：**
+- **C1** `feat(c1)`：`skill`/`skill_file`/`agent_skill` 三表 + `agent.description`；迁移 `0011_agent_skills`（纯加性，**未对共享 dev 库执行**）；`routes/skills.ts`（CRUD + GitHub 导入）；`routes/agents.ts` 详情 `GET /:id` + `PUT /:id/skills`。
+- **C2** `feat(c2)`：技能库 `/skills`（列表/新建/编辑/导入/删除）；智能体详情页 `/agents/:id`（属性 + 技能/系统指令/活动三 tab，技能可挂载/卸载）；侧栏「技能库」菜单。
+- **C3** `feat(c3)`：claim 下发挂载技能；daemon `materializeSkills` 把技能物化进 `<worktree>/.claude/skills/<slug>/SKILL.md`（frontmatter 合成 / manifest 只清自管 slug / git exclude 不污染 PR / best-effort）。
+
+**未做（按计划留后）：** 派发即 contentHash 快照锁版本（schema 已留 `content_hash`，daemon 暂解析即用）；二进制附件；C4 每 agent MCP；C5 适配层重构 + registry 导入 + 插件位。
+
+**待你验证**：因共享 dev 库未执行 `db:migrate`，需在你的环境 `cd server && bun run db:migrate` 应用 `0011` 后，技能库/详情页才有真实数据；端到端（挂技能→派发→worktree 里 `.claude/skills` 生效）需真机 daemon 跑一遍。
