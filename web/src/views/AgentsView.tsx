@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Plus, Bot, Pencil, Trash2 } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
@@ -15,6 +16,7 @@ import { api, type Agent, type Runtime } from "@/lib/api-client";
 export function AgentsView() {
   const { t } = useUi();
   const { currentWorkspace } = useAuth();
+  const navigate = useNavigate();
   const wsId = currentWorkspace?.id ?? null;
 
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -125,7 +127,13 @@ export function AgentsView() {
               return (
               <div
                 key={agent.id}
-                className="group flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-active-fg/30"
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/agents/${agent.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") navigate(`/agents/${agent.id}`);
+                }}
+                className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-[#2563eb]/40 hover:bg-muted/30"
               >
                 <ActorAvatar
                   type="agent"
@@ -147,7 +155,10 @@ export function AgentsView() {
                   <button
                     type="button"
                     title={t("agents.edit")}
-                    onClick={() => openEdit(agent)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEdit(agent);
+                    }}
                     className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
                   >
                     <Pencil className="size-4" />
@@ -155,7 +166,10 @@ export function AgentsView() {
                   <button
                     type="button"
                     title={t("agents.delete")}
-                    onClick={() => remove(agent)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void remove(agent);
+                    }}
                     className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                   >
                     <Trash2 className="size-4" />

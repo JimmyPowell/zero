@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Server,
   Bot,
+  Library,
   ChevronLeft,
   Search,
   SquarePen,
@@ -39,6 +40,7 @@ const menus: MenuItem[] = [
   { key: "requirements", labelKey: "menu.requirements", icon: ClipboardList },
   { key: "runtime", labelKey: "menu.runtime", icon: Server },
   { key: "agents", labelKey: "menu.agents", icon: Bot },
+  { key: "skills", labelKey: "menu.skills", icon: Library },
 ];
 
 // 侧边栏动作项（搜索 / 新建需求）：图标 + 文案 + 右侧快捷键徽标

@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { claudeAdapter } from "./claude-adapter";
 import { codexAdapter } from "./codex-adapter";
@@ -151,6 +151,7 @@ interface Claim {
     provider: string;
     model: string | null;
     instructions: string | null;
+    skills?: SkillSpec[];
   };
   context?: {
     issue: { number: number; title: string; description: string | null };
@@ -308,6 +309,113 @@ function writeMcpConfig(server: string, token: string, issueId: string): string 
   const path = join(MCP_DIR, `${issueId}.json`);
   writeFileSync(path, JSON.stringify(cfg), { mode: 0o600 });
   return path;
+}
+
+// ---- 技能物化（C3）----
+// 把 agent 挂载的技能写进工作目录的 .claude/skills/<slug>/SKILL.md（+ 文本附件），
+// 由底层 CLI（Claude Code）自动发现、按需加载。只管理我们写入的 slug（manifest），
+// 不动用户自带的 skill；并把 .claude/ 加入 git exclude，避免污染 diff/PR。
+
+interface SkillSpec {
+  slug: string;
+  name: string;
+  description: string;
+  content: string | null;
+  files?: { path: string; content: string }[];
+}
+
+// YAML 双引号标量（转义 \ 与 "，换行压成空格）
+function yamlScalar(s: string): string {
+  return `"${s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, " ")}"`;
+}
+
+// 防穿越的相对路径（去前导 /、拒绝 .. 段、拒空）
+function safeRelPath(p: string): string | null {
+  const norm = p.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!norm || norm.includes("\0")) return null;
+  if (norm.split("/").some((seg) => seg === "..")) return null;
+  return norm;
+}
+
+// 合成 SKILL.md：frontmatter 由 name/description 生成，正文用 content（库里不存 frontmatter）
+function renderSkillMd(sk: SkillSpec): string {
+  const name = sanitize(sk.slug) || "skill";
+  return `---\nname: ${name}\ndescription: ${yamlScalar(sk.description ?? "")}\n---\n\n${sk.content ?? ""}\n`;
+}
+
+// 把 .claude/ 等加入本工作树的 git exclude（worktree / dir 模式且是 git 才生效）
+async function excludeFromGit(cwd: string) {
+  const r = await git(["rev-parse", "--git-path", "info/exclude"], cwd);
+  if (!r.ok || !r.out) return; // 非 git（空目录模式）→ 跳过
+  let p = r.out.trim();
+  if (!isAbsolute(p)) p = join(cwd, p);
+  const want = ["/.claude/", "/.agents/", "/.codex/", "/.opencode/"];
+  let cur = "";
+  try {
+    cur = readFileSync(p, "utf8");
+  } catch {
+    /* exclude 文件可能尚不存在 */
+  }
+  const add = want.filter((w) => !cur.includes(w));
+  if (!add.length) return;
+  ensureDir(dirname(p));
+  const sep = cur && !cur.endsWith("\n") ? "\n" : "";
+  writeFileSync(
+    p,
+    `${cur}${sep}# zero: 物化的技能/工具配置，勿提交\n${add.join("\n")}\n`,
+  );
+}
+
+// 在一个根目录下物化技能；只清理上轮我们写的 slug（manifest），保留用户自带 skill
+function materializeInto(root: string, skills: SkillSpec[]) {
+  ensureDir(root);
+  const manifestPath = join(root, ".zero-managed.json");
+  let prev: string[] = [];
+  try {
+    const j = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (Array.isArray(j)) prev = j.filter((x): x is string => typeof x === "string");
+  } catch {
+    /* 首次 / 无 manifest */
+  }
+  // 先移除上一轮我们写过的（卸载的技能这轮不应再出现）
+  for (const slug of prev) {
+    try {
+      rmSync(join(root, slug), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  const now: string[] = [];
+  for (const sk of skills) {
+    const slug = sanitize(sk.slug);
+    if (!slug) continue;
+    const dir = join(root, slug);
+    ensureDir(dir);
+    writeFileSync(join(dir, "SKILL.md"), renderSkillMd(sk));
+    for (const f of sk.files ?? []) {
+      const rel = safeRelPath(f.path);
+      if (!rel) continue;
+      const fp = join(dir, rel);
+      ensureDir(dirname(fp));
+      writeFileSync(fp, f.content);
+    }
+    now.push(slug);
+  }
+  writeFileSync(manifestPath, JSON.stringify(now));
+}
+
+// 物化进 worktree：Claude Code 从 cwd 的 .claude/skills/ 自动发现（OpenCode 也读它）。
+// 即便本轮无技能也跑一遍：清掉上轮残留。返回物化的技能数。
+async function materializeSkills(
+  cwd: string,
+  skills: SkillSpec[],
+): Promise<number> {
+  materializeInto(join(cwd, ".claude", "skills"), skills);
+  await excludeFromGit(cwd);
+  return skills.length;
 }
 
 // opts.full=false 且在续接会话时只渲染增量评论（旧评论已在会话记忆里）；
@@ -763,6 +871,13 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     const mcpConfig = spec.mcp
       ? writeMcpConfig(server, token, issueId)
       : undefined;
+    // 物化挂载的技能进 worktree（Claude Code 从 .claude/skills 自动发现）；best-effort，不阻断
+    try {
+      const n = await materializeSkills(cwd, claim.agent?.skills ?? []);
+      if (n) console.log(`物化 ${n} 个技能 → ${cwd}/.claude/skills`);
+    } catch (err) {
+      console.error(`物化技能失败（忽略继续）：${(err as Error).message}`);
+    }
     // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
     const reporter = makeReporter(async (events) => {
       await post(server, token, `/daemon/tasks/${taskId}/events`, { events });

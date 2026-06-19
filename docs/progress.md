@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并智能体技能（feat/agent-skills → main）🎉
+
+- 合入 Phase C：技能库（CRUD + GitHub 导入）、智能体详情页（属性/技能/系统指令/活动）、agent 加 `description`、daemon 把挂载技能**物化进 worktree `.claude/skills/<slug>/SKILL.md`**（Claude Code 自动发现）。
+- **迁移撞号**：分支 `0011_agent_skills`（3 表 skill/skill_file/agent_skill + `agent.description`，**纯加性、dev 库未应用**）与 main `0011`/`0012` 同号 → 取 main 迁移目录、删分支 0011、`db:generate` 重生成为 **0013** 并 `db:migrate` 真建表。
+- **冲突**：除迁移产物外全是"双方各自新增、保留两边"（schema/index/daemon/api-client/ui-store/main/Layout/progress auto-merge 或并列）；`daemon/index.ts` executeClaim 取 main 的 `model`+provider 门控 mcpConfig，插入分支的 `materializeSkills` 调用，丢掉分支冗余的 prompt/mcpConfig。
+- **限制（C5 待办）**：物化只写 `.claude/skills`（Claude Code）；Codex 实际要 `.agents/skills` → 给 Codex 用技能需补。
+- **校验**：typecheck/build + `db:migrate` 建表；技能端到端实测（见提交说明）。
+
 ## 2026-06-19 · 立项记录：Agent 凭据注入（BYOK）⏳待办
 
 - **调研**：Zero 现状 = daemon `env: process.env` **复用机器登录态**（claude OAuth / codex ChatGPT / opencode 存盘），控制层无凭据字段。Multica 已做 per-agent `custom_env`（BYOK，注入 `ANTHROPIC_API_KEY`/`*_BASE_URL`/Bedrock 等），但**值明文存 DB**。
@@ -62,6 +70,30 @@
 - **多 provider 统一**：`detail` 是 provider 无关字段，Codex/OpenCode 接入时各自 adapter 填同一字段即可（Phase 2）。
 - **实测**：adapter 单测 18/18（各事件 text 摘要 + detail 完整）、API 往返 6/6（daemon 发带 detail 事件 → 落库 → 历史接口返回 detail）；server/web/daemon tsc + build 全过。
 - **下一批**：Phase 2 = Codex + OpenCode 真正执行 + 各自 adapter（去掉「只接 Claude」）；Phase 3（后话）= 某次执行改了哪些文件/±行数/每文件 diff/文件预览。
+## 2026-06-19 · Phase C：Skill 全链路 C1–C3 实现（feat/agent-skills）✅
+
+> 确认方案后开发：先做 Skill 全链路，工作空间级 skill + 第一版含 GitHub 导入。3 个分阶段 commit，均过 typecheck/build。**未对共享 dev 库执行 migrate**（别人也在用），待用户环境自行 `db:migrate`。
+
+- **C1 数据模型 + 服务端 API** `feat(c1)`：
+  - schema 新增 `skill`（slug/name/description/content/source/source_ref/content_hash）、`skill_file`（path/is_binary/content/storage_key，二进制留 C5）、`agent_skill`（多对多 + position）；`agent` 加 `description`。迁移 `0011_agent_skills`（drizzle-kit 生成，纯加性）。
+  - `routes/skills.ts`：工作空间级 CRUD + `POST /import`（解析 GitHub 链接 → contents API 找 SKILL.md → frontmatter 解析 + 同级文本附件，有界 20 个/256KB）。
+  - `routes/agents.ts`：详情 `GET /:id`（绑定运行时 + 挂载技能 + 30 天用量 + 最近运行）+ `PUT /:id/skills`（整体替换挂载，校验同工作空间）。
+- **C2 前端** `feat(c2)`：
+  - 技能库 `/skills`：列表 + `CreateSkillDialog`（建/编辑，编辑按 id 拉详情载正文）+ `ImportSkillDialog`（GitHub）+ 删除。
+  - 智能体详情页 `/agents/:id`（仿 `RuntimeDetailView`）：头部 + 属性（provider/model/runtime）+ 三 tab（技能挂载·卸载 via `SkillAttachDialog` / 系统指令 / 活动=用量+最近运行）。
+  - `AgentsView` 行可点进详情；`CreateAgentDialog` 加 description；api-client / ui-store(zh+en) / 路由 / 侧栏「技能库」接线。
+- **C3 运行时注入** `feat(c3)`：
+  - claim 用 `loadAgentSkills` 把挂载技能（+文本附件）随 claim 下发。
+  - daemon `materializeSkills`：物化进 `<worktree>/.claude/skills/<slug>/SKILL.md`（frontmatter 由 name/description 合成，库里只存正文）；**manifest 只清自管 slug**（保留用户自带 skill，卸载即消失）；防穿越附件路径；`git rev-parse --git-path info/exclude` 把 `.claude/` 加 exclude 不污染 PR；best-effort 失败不阻断。按 issue 隔离、随 worktree 清理。
+- **校验**：server / web / daemon typecheck 全过；web `vite build` 过。**未跑完整后端/daemon**（共享环境）。详见 `docs/agent-extensibility.md` §9/§10。
+- **下一步**：用户环境 `db:migrate` 应用 0011 + 真机 e2e；之后排 C4（每 agent MCP）/ C5（适配层 + 版本快照 + 二进制 + 插件位）。
+
+## 2026-06-19 · Phase C 可扩展性：调研 + 方案设计（待确认）📝
+
+- **隔离**：开分支 `feat/agent-skills` / 工作树 `~/code/zero-agent-skills`，调研与设计在树内进行。
+- **调研**（4 路并行）：① 四个底层 CLI（Claude Code/Codex/OpenCode/Gemini）能力矩阵 —— **`SKILL.md` 是跨工具开放标准**（四家通吃，OpenCode/Codex 直读 `.claude/skills`、`.agents/skills`）；② Multica 的 skill（DB+物化）/agent 数据模型/MCP(按 provider 分流)/无插件；③ Multica 短板（版本粗糙、二进制炸、provider 写死 #257、安全裸奔、#1579 可信度）；④ MCP 争议（token 膨胀/投毒/工具混淆 vs 渐进披露/code-execution）。
+- **产出**：`docs/agent-extensibility.md` —— Skill 作能力原语（instructions=人格 / skills=按需能力）、控制层存 + 运行时物化进 worktree（随 issue 清理、git exclude 不污染 PR、派发即快照版本）、库+挂载双层、MCP 带教训接（限域+白名单+成本上台面）、ProviderAdapter 留插件位、智能体详情页+技能库 UI、分阶段 C1–C5。
+- **下一步**：等用户确认方案（§10 开放问题），再按 §9 阶段开发。**本条之前未改任何代码。**
 
 ## 2026-06-19 · 合并运行时管理升级（feat/runtime-management → main）🎉
 

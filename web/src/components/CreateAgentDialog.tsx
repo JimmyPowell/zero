@@ -48,6 +48,7 @@ export function CreateAgentDialog({
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<AgentProvider>("claude_code");
   const [model, setModel] = useState("");
+  const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
   const [runtimes, setRuntimes] = useState<Runtime[]>([]);
@@ -60,6 +61,7 @@ export function CreateAgentDialog({
     setName(agent?.name ?? "");
     setProvider(agent?.provider ?? "claude_code");
     setModel(agent?.model ?? "");
+    setDescription(agent?.description ?? "");
     setInstructions(agent?.instructions ?? "");
     setRuntimeId(agent?.runtimeId ?? null);
     setError(null);
@@ -105,6 +107,7 @@ export function CreateAgentDialog({
               provider,
               model: model.trim() || null,
               instructions: instructions.trim() || null,
+              description: description.trim() || null,
               runtimeId,
             })
           ).agent
@@ -114,6 +117,7 @@ export function CreateAgentDialog({
               provider,
               model: model.trim() || undefined,
               instructions: instructions.trim() || undefined,
+              description: description.trim() || undefined,
               runtimeId,
             })
           ).agent;
@@ -151,6 +155,18 @@ export function CreateAgentDialog({
               placeholder={t("agents.namePh")}
               value={name}
               onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+
+          {/* 描述 */}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm text-muted-foreground">
+              {t("agents.description")}
+            </span>
+            <Input
+              placeholder={t("agents.descriptionPh")}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </label>
 

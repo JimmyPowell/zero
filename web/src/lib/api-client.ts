@@ -254,6 +254,7 @@ export interface Agent {
   provider: AgentProvider;
   model: string | null;
   instructions: string | null;
+  description: string | null;
   runtimeId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -264,6 +265,7 @@ export interface CreateAgentPayload {
   provider?: AgentProvider;
   model?: string;
   instructions?: string;
+  description?: string;
   runtimeId?: string | null;
 }
 
@@ -272,7 +274,87 @@ export interface UpdateAgentPayload {
   provider?: AgentProvider;
   model?: string | null;
   instructions?: string | null;
+  description?: string | null;
   runtimeId?: string | null;
+}
+
+// ---- 技能（Skill）----
+export type SkillSource = "manual" | "github";
+
+export interface Skill {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  source: SkillSource;
+  sourceRef: string | null;
+  agentCount: number;
+  fileCount: number;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface SkillFileRef {
+  id: string;
+  path: string;
+  isBinary: boolean;
+  size: number;
+}
+
+export interface SkillDetail extends Skill {
+  content: string | null;
+}
+
+export interface SkillDetailResponse {
+  skill: SkillDetail;
+  files: SkillFileRef[];
+  agents: { id: string; name: string }[];
+}
+
+export interface CreateSkillPayload {
+  name: string;
+  description: string;
+  content?: string;
+}
+
+export interface UpdateSkillPayload {
+  name?: string;
+  description?: string;
+  content?: string | null;
+}
+
+// 详情页：agent + 绑定运行时 + 挂载技能 + 用量 + 最近运行
+export interface AgentSkillRef {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+}
+
+export interface AgentRecentRun {
+  taskId: string;
+  status: RunStatus;
+  createdAt: string;
+  finishedAt: string | null;
+  issueId: string;
+  issueNumber: number;
+  issueTitle: string;
+}
+
+export interface AgentUsageSummary {
+  days: number;
+  runs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface AgentDetail {
+  agent: Agent;
+  runtime: { id: string; name: string; online: boolean } | null;
+  skills: AgentSkillRef[];
+  usage: AgentUsageSummary;
+  recentRuns: AgentRecentRun[];
 }
 
 export type RuntimeVisibility = "private" | "workspace";
@@ -524,6 +606,45 @@ export const api = {
 
   deleteAgent: (workspaceId: string, id: string) =>
     request<{ ok: boolean }>(`/workspaces/${workspaceId}/agents/${id}`, {
+      method: "DELETE",
+    }),
+
+  getAgent: (workspaceId: string, id: string) =>
+    request<AgentDetail>(`/workspaces/${workspaceId}/agents/${id}`),
+
+  setAgentSkills: (workspaceId: string, id: string, skillIds: string[]) =>
+    request<{ skills: AgentSkillRef[] }>(
+      `/workspaces/${workspaceId}/agents/${id}/skills`,
+      { method: "PUT", body: { skillIds } },
+    ),
+
+  // ---- 技能（Skill 库）----
+  listSkills: (workspaceId: string) =>
+    request<{ skills: Skill[] }>(`/workspaces/${workspaceId}/skills`),
+
+  createSkill: (workspaceId: string, payload: CreateSkillPayload) =>
+    request<{ skill: Skill }>(`/workspaces/${workspaceId}/skills`, {
+      method: "POST",
+      body: payload,
+    }),
+
+  importSkill: (workspaceId: string, url: string) =>
+    request<{ skill: Skill }>(`/workspaces/${workspaceId}/skills/import`, {
+      method: "POST",
+      body: { url },
+    }),
+
+  getSkill: (workspaceId: string, id: string) =>
+    request<SkillDetailResponse>(`/workspaces/${workspaceId}/skills/${id}`),
+
+  updateSkill: (workspaceId: string, id: string, patch: UpdateSkillPayload) =>
+    request<{ skill: SkillDetail }>(`/workspaces/${workspaceId}/skills/${id}`, {
+      method: "PATCH",
+      body: patch,
+    }),
+
+  deleteSkill: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/skills/${id}`, {
       method: "DELETE",
     }),
 
