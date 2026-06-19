@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { ChevronDown, Check, Plus, LogOut, Settings } from "lucide-react";
+import { ChevronDown, Check, Plus, LogOut } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -11,24 +10,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
+import { useAuth } from "@/lib/auth-store";
 
-interface Workspace {
-  id: string;
-  name: string;
-}
-
-// 占位工作空间数据，后续接入接口
-const workspaces: Workspace[] = [
-  { id: "default", name: "Zero" },
-  { id: "team-a", name: "Team A" },
-];
-
-export function WorkspaceSwitcher() {
+export function WorkspaceSwitcher({
+  onCreateWorkspace,
+}: {
+  onCreateWorkspace: () => void;
+}) {
   const { t } = useUi();
-  const [current, setCurrent] = useState<Workspace>(workspaces[0]);
-  const userName = t("user.name");
+  const { user, workspaces, currentWorkspace, selectWorkspace, logout } =
+    useAuth();
+
+  const userName = user?.name ?? t("user.name");
   const initial = userName.charAt(0).toUpperCase();
-  const wsInitial = current.name.charAt(0).toUpperCase();
+  const wsName = currentWorkspace?.name ?? t("brand");
+  const wsInitial = wsName.charAt(0).toUpperCase();
 
   return (
     <DropdownMenu>
@@ -41,7 +37,7 @@ export function WorkspaceSwitcher() {
             {wsInitial}
           </span>
           <span className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-foreground">
-            {current.name}
+            {wsName}
           </span>
           <ChevronDown className="size-4 flex-shrink-0 text-muted-foreground" />
         </button>
@@ -58,7 +54,7 @@ export function WorkspaceSwitcher() {
               {userName}
             </p>
             <p className="truncate text-xs leading-tight text-muted-foreground">
-              {t("user.email")}
+              {user?.email}
             </p>
           </div>
         </div>
@@ -72,7 +68,7 @@ export function WorkspaceSwitcher() {
           </span>
         </DropdownMenuLabel>
         {workspaces.map((ws) => (
-          <DropdownMenuItem key={ws.id} onSelect={() => setCurrent(ws)}>
+          <DropdownMenuItem key={ws.id} onSelect={() => selectWorkspace(ws.id)}>
             <span className="inline-flex size-[22px] flex-shrink-0 items-center justify-center rounded-md bg-[#2563eb] text-[11px] font-bold text-white">
               {ws.name.charAt(0).toUpperCase()}
             </span>
@@ -80,27 +76,20 @@ export function WorkspaceSwitcher() {
             <Check
               className={cn(
                 "ml-auto size-4 text-active-fg",
-                ws.id === current.id ? "opacity-100" : "opacity-0",
+                ws.id === currentWorkspace?.id ? "opacity-100" : "opacity-0",
               )}
               strokeWidth={2.5}
             />
           </DropdownMenuItem>
         ))}
-        <DropdownMenuItem onSelect={() => console.log("create workspace")}>
+        <DropdownMenuItem onSelect={onCreateWorkspace}>
           <Plus />
           {t("workspace.create")}
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem onSelect={() => console.log("settings")}>
-          <Settings />
-          {t("user.settings")}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          variant="destructive"
-          onSelect={() => console.log("logout")}
-        >
+        <DropdownMenuItem variant="destructive" onSelect={logout}>
           <LogOut />
           {t("user.logout")}
         </DropdownMenuItem>

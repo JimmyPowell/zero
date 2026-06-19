@@ -12,6 +12,8 @@
   body,
   #root {
     height: 100%;
+    /* 文档级滚动锁死：整个外壳定死，滚动只交给内部面板 */
+    overflow: hidden;
   }
 
   body {
@@ -62,4 +64,34 @@
 
 .zero-popover[data-state='closed'] {
   animation: zero-pop-out 0.12s ease;
+}
+
+/* 手写弹窗（搜索 / 新建需求 / 新建工作空间）的遮罩与卡片入场：
+ * 遮罩柔和淡入（配合背景毛玻璃模糊），卡片轻微上浮缩放，整体放缓更柔和。 */
+@keyframes zero-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zero-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.zero-overlay {
+  animation: zero-overlay-in 0.22s ease both;
+}
+
+.zero-dialog {
+  animation: zero-dialog-in 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
