@@ -47,6 +47,53 @@ const usageSchema = z
   .nullable()
   .optional();
 
+// 解析一个 agent 挂载的技能（含文本附件），随 claim 下发供 daemon 物化进 worktree。
+// 第一版只下发文本附件（is_binary=false）；二进制（对象存储）留到 C5。
+async function loadAgentSkills(agentId: string) {
+  const rows = await db
+    .select({
+      id: schema.skill.id,
+      slug: schema.skill.slug,
+      name: schema.skill.name,
+      description: schema.skill.description,
+      content: schema.skill.content,
+    })
+    .from(schema.agentSkill)
+    .innerJoin(schema.skill, eq(schema.agentSkill.skillId, schema.skill.id))
+    .where(eq(schema.agentSkill.agentId, agentId))
+    .orderBy(asc(schema.agentSkill.position));
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const files = await db
+    .select({
+      skillId: schema.skillFile.skillId,
+      path: schema.skillFile.path,
+      content: schema.skillFile.content,
+    })
+    .from(schema.skillFile)
+    .where(
+      and(
+        inArray(schema.skillFile.skillId, ids),
+        eq(schema.skillFile.isBinary, false),
+      ),
+    );
+  const byId = new Map<string, { path: string; content: string }[]>();
+  for (const f of files) {
+    if (f.content == null) continue;
+    const arr = byId.get(f.skillId) ?? [];
+    arr.push({ path: f.path, content: f.content });
+    byId.set(f.skillId, arr);
+  }
+  return rows.map((r) => ({
+    slug: r.slug,
+    name: r.name,
+    description: r.description,
+    content: r.content,
+    files: byId.get(r.id) ?? [],
+  }));
+}
+
 export const daemonRoutes = new Hono<DaemonEnv>()
   .use(requireRuntimeToken)
   // daemon 启动：上报能力 + 刷新心跳
@@ -159,6 +206,8 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       agentId: cand.agentId,
       resuming: !!cand.sessionId,
     });
+    // 挂载的技能随 claim 下发，daemon 据此在 worktree 里物化成 SKILL.md（C3）
+    const skills = await loadAgentSkills(cand.agentId);
 
     return c.json({
       task: {
@@ -167,7 +216,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         sessionId: cand.sessionId,
         triggerEventId: cand.triggerEventId,
       },
-      agent: ag,
+      agent: { ...ag, skills },
       context,
     });
   })
