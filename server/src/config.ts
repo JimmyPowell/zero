@@ -17,4 +17,9 @@ export const config = {
     from: process.env.SMTP_FROM ?? "",
     fromName: process.env.SMTP_FROM_NAME ?? "Zero",
   },
+  // 企业微信智能机器人（长连接，Bot ID + Secret）。未配置则不启动 bot。
+  wecom: {
+    botId: process.env.WECOM_BOT_ID ?? "",
+    secret: process.env.WECOM_BOT_SECRET ?? "",
+  },
 };

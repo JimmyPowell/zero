@@ -1,6 +1,6 @@
 # Zero 通知 / 推送系统
 
-> 状态：N1（通知骨架 + 邮件，真实发信已验证）✅ + N2（企业微信群机器人）✅ 完成；N3（Telegram 双向）待开始。本文是设计定稿 + 路线图。
+> 状态：N1（通知骨架 + 邮件，真实发信已验证）✅ + N2（企业微信**智能机器人** SDK 长连接，主动推送已真机验证；绑定码；双向能力已具备但回控留后续）✅；N3（Telegram 双向）待开始。本文是设计定稿 + 路线图。
 > 缘起：对标 Multica 调研发现——**Multica 的对外通知是一片空白**（只有站内收件箱 + WebSocket，没有邮件事件通知 / Telegram / 企业微信 / 飞书 / 移动推送 / 对外 webhook）。这正是 Zero 的差异化点：让 issue 的状态流转能**主动推到外部渠道**，并支持**从渠道回控**。
 
 ## 一、调研结论：Multica 的通知能力（参照系）
@@ -53,7 +53,7 @@
 | `workspace_id` | 所属工作空间 |
 | `user_id` | 绑定的用户（群机器人类渠道可为空，后续） |
 | `kind` | `email \| telegram \| wecom \| feishu \| webpush`（枚举先全，N1 只用 email） |
-| `config` | JSON：email `{address}`；telegram `{chatId}`；wecom/feishu `{webhookUrl}`；webpush `{endpoint,keys}` |
+| `config` | JSON：email `{address}`；**wecom `{target}`**（企微 userid/chatid，经绑定码关联）；telegram `{chatId}`；feishu `{webhookUrl}`；webpush `{endpoint,keys}` |
 | `enabled` | 是否启用 |
 | `verified_at` | 验证时间（email 先免验证 = 创建即视为已验证；Telegram `/start <token>` 时回填） |
 | `created_at` / `updated_at` | |
@@ -140,7 +140,8 @@ APP_URL=http://localhost:5173   # 邮件里 issue 链接的 web 基址
 ## 九、路线图
 
 - **N1** ✅ 通知骨架（`notifyIssueEvent` + `notification_outbox` + worker + 退避重试）+ **邮件** adapter + 渠道绑定 API + 前端「设置」页；点亮 `created` / `run_finished` 两个通知点。真实 QQ SMTP 发信已验证。
-- **N2** ✅ 企业微信群机器人（incoming webhook markdown 卡片，单向）+ 设置页卡片。本地 mock 验证通过；待真实群机器人 webhook 做线上验证。
+- **N2** ✅ 企业微信「智能机器人」（官方 `@wecom/aibot-node-sdk` 长连接，**双向能力** + **主动推送**，免公网回调）。服务端常驻 `WSClient`，outbox 经 `sendWecomMessage(target)` 推送；绑定走**一次性绑定码**（设置页生成 → 发给机器人 → 回调写 `config={target}`）。真机实测：连接/双向/主动推送/接入 Zero 管线 sent 全通过。**本档只做主动推送**，双向回控（按钮/命令）排到后续。
+  > 注：旧版「群机器人 webhook（带 key）」是另一个产品、单向；用户用的是新版智能机器人，故 N2 改用 SDK 长连接重做。
 - **N3** Telegram（出站推送 + **入站回控**，双向从这里开始）。← 下一步
 - **N4** 飞书自定义机器人。
 - **N5（独立最后档）** React Native + Expo 原生 App（复用 TS 逻辑/类型，UI 重写，APNs/FCM 推送 + 完整双向）。

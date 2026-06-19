@@ -2,7 +2,7 @@ import { and, asc, eq, lte } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { sendEmail } from "@/lib/channels/email";
-import { sendWecom } from "@/lib/channels/wecom";
+import { sendWecomMessage } from "@/lib/channels/wecom-bot";
 
 // 通知发件箱 worker：周期拉取 pending 且到期的行 → 按渠道投递 → 成功置 sent / 失败退避重试。
 // 单进程足够（与 run-bus 同哲学）。多实例部署时再加 SKIP LOCKED / 分布式锁。
@@ -35,9 +35,9 @@ async function deliver(row: OutboxRow): Promise<void> {
     return;
   }
   if (row.channel === "wecom") {
-    const url = (binding.config as { webhookUrl?: string })?.webhookUrl;
-    if (!url) throw new Error("wecom 绑定缺少 webhookUrl");
-    await sendWecom(url, row.subject ?? "", row.body ?? "");
+    const target = (binding.config as { target?: string })?.target;
+    if (!target) throw new Error("wecom 绑定缺少 target");
+    await sendWecomMessage(target, row.subject ?? "", row.body ?? "");
     return;
   }
   // 其它渠道（telegram/feishu/webpush）后续 adapter 补

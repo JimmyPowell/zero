@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · N2 重做：企业微信「智能机器人」（SDK 长连接，双向+主动推送）
+
+- **关键修正**：用户的机器人是企业微信**新版「智能机器人」**（Bot ID + Secret，长连接/URL回调），**不是**旧版群机器人 webhook。智能机器人**本身双向**、且支持**主动推送**（`aibot_send_msg`），长连接出站、**免公网回调**。之前「企业微信只能单向」的判断仅适用于旧群机器人。
+- **实测验证（用户真机器人）**：官方 `@wecom/aibot-node-sdk` 在 Bun 跑通 —— ① 连接认证成功；② 双向：用户发「1122」→ 机器人回复，抓到 userid `T60110050A`；③ 主动推送 errcode 0；④ 接入 Zero 管线后，`run_finished → outbox → 服务端 worker 经 live bot sendMessage → status sent` 真实到达。
+- **重做内容**：删旧 `wecom.ts`(webhook)；新 `lib/channels/wecom-bot.ts`（`WSClient` 常驻：开机连、心跳/重连、`sendWecomMessage` 主动推送、收消息回调做**绑定码兑换**）；`outbox` wecom 分支改调 `sendWecomMessage(target)`；`index` 开机 `startWecomBot()`；config 加 `WECOM_BOT_ID/SECRET`（.env，不入库）。
+- **绑定方式**（按用户定）：**一次性绑定码** —— 设置页 `POST /channels/wecom/link-code` 拿码（实测返回 `ZERO-XXXX`），用户在企微把码发给机器人 → 回调里核对 → 写 `channel_binding(kind=wecom, config={target})`。前端 `SettingsView` 加 `WecomCard`（生成码 + 复制 + 轮询自动显示已绑定 + 解绑）。
+- **范围**（按用户定）：本档**只做主动推送**；双向回控（按钮卡片/命令）下一步。
+- 依赖：`@wecom/aibot-node-sdk@1.0.7`。
+
 ## 2026-06-19 · N2 企业微信群机器人渠道
 
 - **后端**：`lib/channels/wecom.ts`（群机器人 incoming webhook，POST markdown，解析 `errcode`）；outbox `deliver` 加 `wecom` 分支；`notify` 收件人渠道查询从「仅 email」泛化为「所有已实现 adapter 的渠道」（`SUPPORTED_CHANNELS=[email,wecom]`，一绑定一 outbox 行、内容渠道无关）；`channels` 路由 upsert 改判别联合（email 要 address / wecom 要 webhookUrl）。

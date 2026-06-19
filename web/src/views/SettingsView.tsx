@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { Mail, MessageSquare, Bell, Trash2, type LucideIcon } from "lucide-react";
+import {
+  Mail,
+  MessageSquare,
+  Bell,
+  Trash2,
+  Copy,
+  Check,
+  type LucideIcon,
+} from "lucide-react";
 
 import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
@@ -15,14 +23,6 @@ import {
 } from "@/lib/api-client";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-function isUrl(v: string): boolean {
-  try {
-    new URL(v);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // 轻量开关（无现成 Switch 组件，内联一个）
 function Switch({
@@ -53,10 +53,9 @@ function Switch({
   );
 }
 
-// 单个渠道卡片：邮件 / 企业微信 共用，按 kind 取不同配置字段
+// 渠道卡片（邮件这类「填值即生效」的渠道；企业微信走绑定码，见 WecomCard）
 function ChannelCard({
   wsId,
-  kind,
   icon: Icon,
   label,
   desc,
@@ -70,14 +69,13 @@ function ChannelCard({
   onChanged,
 }: {
   wsId: string | null;
-  kind: "email" | "wecom";
   icon: LucideIcon;
   label: string;
   desc: string;
   placeholder: string;
   binding: ChannelBinding | null;
   defaultValue: string;
-  configKey: "address" | "webhookUrl";
+  configKey: "address";
   validate: (v: string) => boolean;
   invalidMsg: string;
   statusText: (binding: ChannelBinding) => string;
@@ -113,10 +111,11 @@ function ChannelCard({
     setSaving(true);
     setError(null);
     try {
-      const payload: UpsertChannelPayload =
-        kind === "email"
-          ? { kind: "email", address: v, enabled }
-          : { kind: "wecom", webhookUrl: v, enabled };
+      const payload: UpsertChannelPayload = {
+        kind: "email",
+        address: v,
+        enabled,
+      };
       await api.upsertChannel(wsId, payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
@@ -205,6 +204,137 @@ function ChannelCard({
   );
 }
 
+// 企业微信智能机器人：绑定走「绑定码」（不是填 URL）
+function WecomCard({
+  wsId,
+  binding,
+  onChanged,
+}: {
+  wsId: string | null;
+  binding: ChannelBinding | null;
+  onChanged: () => void;
+}) {
+  const { t } = useUi();
+  const [code, setCode] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const active = binding != null && binding.enabled;
+
+  // 展示了绑定码且尚未绑定 → 轮询刷新，用户发码后自动显示「已绑定」
+  useEffect(() => {
+    if (!code || active) return;
+    const id = setInterval(() => onChanged(), 3000);
+    return () => clearInterval(id);
+  }, [code, active, onChanged]);
+  // 绑定成功后收起绑定码
+  useEffect(() => {
+    if (active) setCode(null);
+  }, [active]);
+
+  async function gen() {
+    if (!wsId || generating) return;
+    setGenerating(true);
+    try {
+      const r = await api.createWecomLinkCode(wsId);
+      setCode(r.code);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function unbind() {
+    if (!wsId || !binding) return;
+    if (!window.confirm(t("settings.wecomUnbindConfirm"))) return;
+    await api.deleteChannel(wsId, binding.id);
+    onChanged();
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex size-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#2563eb]/10 text-[#2563eb]">
+          <MessageSquare className="size-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-foreground">
+              {t("settings.wecom")}
+              <span
+                className={cn(
+                  "ml-2 rounded-full px-2 py-0.5 text-[11px] font-normal",
+                  active
+                    ? "bg-emerald-500/10 text-emerald-600"
+                    : "bg-muted text-muted-foreground",
+                )}
+              >
+                {active ? t("settings.on") : t("settings.off")}
+              </span>
+            </p>
+            {active && (
+              <button
+                type="button"
+                onClick={unbind}
+                title={t("settings.wecomUnbind")}
+                className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t("settings.wecomDesc")}
+          </p>
+
+          {active ? (
+            <p className="mt-3 text-xs text-emerald-600">
+              {t("settings.wecomBound")}
+            </p>
+          ) : code ? (
+            <div className="mt-3">
+              <p className="text-xs text-muted-foreground">
+                {t("settings.wecomCodeHint")}
+              </p>
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <code className="flex-1 font-mono text-sm font-semibold text-foreground">
+                  {code}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(code);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }}
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+                >
+                  {copied ? (
+                    <Check className="size-4 text-emerald-500" />
+                  ) : (
+                    <Copy className="size-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3">
+              <Button
+                size="sm"
+                onClick={gen}
+                disabled={generating}
+                className="bg-[#2563eb] text-white hover:bg-[#2563eb]/90"
+              >
+                {generating
+                  ? t("settings.wecomGenerating")
+                  : t("settings.wecomGenCode")}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView() {
   const { t } = useUi();
   const { currentWorkspace, user } = useAuth();
@@ -267,7 +397,6 @@ export function SettingsView() {
           <div className="mt-4 flex flex-col gap-3">
             <ChannelCard
               wsId={wsId}
-              kind="email"
               icon={Mail}
               label={t("settings.email")}
               desc={t("settings.emailDesc")}
@@ -282,21 +411,7 @@ export function SettingsView() {
               }
               onChanged={load}
             />
-            <ChannelCard
-              wsId={wsId}
-              kind="wecom"
-              icon={MessageSquare}
-              label={t("settings.wecom")}
-              desc={t("settings.wecomDesc")}
-              placeholder={t("settings.wecomPh")}
-              binding={wecomBinding}
-              defaultValue=""
-              configKey="webhookUrl"
-              validate={isUrl}
-              invalidMsg={t("settings.invalidUrl")}
-              statusText={() => t("settings.wecomConfigured")}
-              onChanged={load}
-            />
+            <WecomCard wsId={wsId} binding={wecomBinding} onChanged={load} />
           </div>
         )}
 

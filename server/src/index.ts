@@ -12,6 +12,7 @@ import { runtimeRoutes } from "@/routes/runtimes";
 import { daemonRoutes } from "@/routes/daemon";
 import { channelRoutes } from "@/routes/channels";
 import { startOutboxWorker } from "@/lib/outbox";
+import { startWecomBot } from "@/lib/channels/wecom-bot";
 
 const app = new Hono();
 
@@ -38,6 +39,8 @@ app.route("/daemon", daemonRoutes);
 
 // 通知发件箱后台投递
 startOutboxWorker();
+// 企业微信智能机器人长连接（配置了 Bot ID/Secret 才启动）
+startWecomBot();
 
 console.log(`Zero server listening on http://localhost:${config.port}`);
 

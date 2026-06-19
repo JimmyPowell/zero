@@ -301,15 +301,19 @@ export type ChannelKind = "email" | "telegram" | "wecom" | "feishu" | "webpush";
 export interface ChannelBinding {
   id: string;
   kind: ChannelKind;
-  config: { address?: string; webhookUrl?: string } & Record<string, unknown>;
+  // email: {address}；wecom: {target}（企微 userid/chatid，经绑定码关联）
+  config: { address?: string; target?: string } & Record<string, unknown>;
   enabled: boolean;
   verifiedAt: string | null;
   createdAt: string;
 }
 
-export type UpsertChannelPayload =
-  | { kind: "email"; address: string; enabled?: boolean }
-  | { kind: "wecom"; webhookUrl: string; enabled?: boolean };
+// 仅 email 走 upsert；wecom 走绑定码流程（createWecomLinkCode）
+export interface UpsertChannelPayload {
+  kind: "email";
+  address: string;
+  enabled?: boolean;
+}
 
 interface AuthResponse {
   token: string;
@@ -479,4 +483,11 @@ export const api = {
     request<{ ok: boolean }>(`/workspaces/${workspaceId}/channels/${id}`, {
       method: "DELETE",
     }),
+
+  // 生成企业微信绑定码（发给智能机器人完成关联）
+  createWecomLinkCode: (workspaceId: string) =>
+    request<{ code: string }>(
+      `/workspaces/${workspaceId}/channels/wecom/link-code`,
+      { method: "POST", body: {} },
+    ),
 };

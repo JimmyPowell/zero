@@ -9,23 +9,18 @@ import {
   requireWorkspaceMember,
   type WorkspaceEnv,
 } from "@/middleware/workspace";
+import { createWecomLinkCode } from "@/lib/channels/wecom-bot";
 
-// 渠道绑定：管理「我」在本工作空间的通知渠道。N1 仅 email。
-// 后续渠道（telegram/wecom/feishu/webpush）在此扩 kind + config 校验。
+// 渠道绑定：管理「我」在本工作空间的通知渠道。
+// - email：直接填邮箱（upsert）。
+// - wecom（企业微信智能机器人）：走「绑定码」——这里只发码，绑定在收消息回调里完成。
 
-// 按 kind 区分配置：email 要 address，wecom 要 webhookUrl
-const upsertSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("email"),
-    address: z.string().trim().email("邮箱格式不正确"),
-    enabled: z.boolean().optional(),
-  }),
-  z.object({
-    kind: z.literal("wecom"),
-    webhookUrl: z.string().trim().url("Webhook 地址不正确"),
-    enabled: z.boolean().optional(),
-  }),
-]);
+// email 直接 upsert（wecom 不走这里，走绑定码）
+const upsertSchema = z.object({
+  kind: z.literal("email"),
+  address: z.string().trim().email("邮箱格式不正确"),
+  enabled: z.boolean().optional(),
+});
 
 function shape(b: schema.ChannelBinding) {
   return {
@@ -61,12 +56,9 @@ export const channelRoutes = new Hono<WorkspaceEnv>()
   .post("/", zValidator("json", upsertSchema), async (c) => {
     const workspaceId = c.get("workspaceId");
     const { sub } = c.get("user");
-    const body = c.req.valid("json");
-    const { kind, enabled } = body;
-    const config =
-      body.kind === "email"
-        ? { address: body.address }
-        : { webhookUrl: body.webhookUrl };
+    const { address, enabled } = c.req.valid("json");
+    const kind = "email" as const;
+    const config = { address };
 
     const [existing] = await db
       .select({ id: schema.channelBinding.id })
@@ -114,6 +106,13 @@ export const channelRoutes = new Hono<WorkspaceEnv>()
       .where(eq(schema.channelBinding.id, id))
       .limit(1);
     return c.json({ channel: shape(row!) }, 201);
+  })
+  // 生成企业微信「绑定码」：把它发给智能机器人即完成账号关联
+  .post("/wecom/link-code", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const code = createWecomLinkCode(workspaceId, sub);
+    return c.json({ code });
   })
   // 删除我的某条渠道绑定
   .delete("/:id", async (c) => {
