@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Clock, Loader2 } from "lucide-react";
 
 import {
@@ -47,13 +47,16 @@ export function SearchCommand({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // 打开时清空查询
+  // 打开时清空查询并聚焦输入框
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      setResults([]);
-    }
+    if (!open) return;
+    setQuery("");
+    setResults([]);
+    // 等挂载/绘制后再聚焦，确保光标落在搜索框内、键入能命中输入框
+    const raf = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
   }, [open]);
 
   // Esc 关闭
@@ -108,6 +111,7 @@ export function SearchCommand({
       >
         <Command shouldFilter={false} loop>
           <CommandInput
+            ref={inputRef}
             value={query}
             onValueChange={setQuery}
             placeholder={t("search.placeholder")}
