@@ -2,6 +2,36 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · B3.3 实时执行日志（抽象层 + 流式 + 浮层）
+
+分支 `feat/agent-exec-stream`。补上「评论触发后详情页看不到 agent 执行记录」的缺口 ——
+之前全程只持久化 `run_started/comment/run_finished` 三条粗事件，既没采集也没存储细粒度执行流。
+
+**抽象层（关键，为接 Codex/OpenCode/第三方铺路）**
+- 与 provider 无关的规范化执行事件 `RunEvent`：`run_status / assistant_text / thinking /
+  tool_call / tool_result / usage / error` + 规范化工具类目（read|edit|write|exec|search|task|other）。
+  作为 **daemon → server → web 的统一线协议**；各 provider 在 daemon 侧用 adapter 翻译，server/web 不碰 provider 细节。
+- 强一致性：事件带每个 task 单调递增的 `seq`，**DB 是唯一真相**；SSE 实时只是优化，断线按 `seq` 从 DB 补齐回放，不漏不重。
+
+**daemon**：`runClaude` 改 `--output-format stream-json --verbose`，逐行解析 → `claudeAdapter` 规范化
+→ `reporter` 带 seq 批量上报；捕获最终 result/session_id。新增 `claude-adapter.ts / reporter.ts / run-events.ts`。
+
+**server**：新表 `run_event`（迁移 0008，`unique(task,seq)` 幂等）+ 进程内 `run-bus`；
+`POST /daemon/tasks/:id/events` 落库 + 实时分发；`run_*` 里程碑 meta 带 `taskId`；
+`GET issues/:id/runs`（运行摘要）/`runs/:taskId/events?after=`（回放）/`runs/:taskId/stream`（SSE：
+backlog→实时→心跳→终态 end，`?access_token=` 兜底鉴权，complete/fail 发 `__end` 即时收尾）。
+
+**web**：`RunLogOverlay` 柔和毛玻璃浮层（复刻 Multica：状态 + provider/runtime/耗时/工具调用数/事件数
+统计条 + 彩色进度条 + 编号事件列表 + 类型筛选 + 复制全部，历史回放 + SSE 实时）；时间线 `run_started`
+→ 运行卡片（状态+统计+「查看执行日志」）；有活动 run 时每 3s 轮询刷新时间线/卡片。
+
+**验证**：真实 daemon 跑 `claude`（无 worktree 的纯问答 & 含 `Bash` 工具两种）→ `run_event` 落库；
+**先连 SSE 再跑** 实测事件按 seq 实时到达（init→tool_call→tool_result→text，时间戳逐秒推进）；
+backlog + `Last-Event-ID` 续传 + end 收尾均通过。server/daemon `tsc`、web `tsc -b` + `vite build` 全过。
+
+**未做（后续）**：worktree 真实改代码（B3.2 仍跑在 `~/.zero/work/<task>`）；`diff_ready/pr_opened`
+里程碑；Codex/OpenCode adapter（抽象层已就位，各加一个 adapter 即可）；多实例的 run-bus（现进程内）。
+
 ## 2026-06-19 · 合并「最新活动时间」+ 搜索聚焦修复
 
 - 合并分支 `feat/issue-last-activity-time`：issue 列表/搜索结果右侧、详情右栏显示**最新活动时间** —— `lastActivityAt = COALESCE(MAX(issue_event.created_at), issue.created_at)`（任意事件：评论/模型回复/状态变更/执行），**列表仍按创建倒序、不重排**（走现成索引 `idx_issue_event_issue`）。
