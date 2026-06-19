@@ -141,3 +141,28 @@ session 按 **(agent, issue)** 一条，所以 @ agent B：
 - 即：**一个 issue 下多 agent = 多条平行 session，共享同一条 issue 时间线当上下文。**
 
 ⚠️ 现状：评论只触发该 issue 的 **assignee** agent（`enqueueTaskForIssue` 走 `assigneeId`）；@-mention 点名别的 agent **尚未接线**，但数据模型（session per (agent,issue)）天然支持，将来加只是"解析 @ → 给被点 agent 也建 task"。
+
+## 7. 缓存命中与 token 成本（实测）
+
+用 `task_usage`（claude `result` 事件的权威数字）实测「resume 续接 + 增量 push」是否吃到 prompt cache。3+1 轮**秒级连发**（缓存全程热）：
+
+| 轮次 | 类型 | input(新算) | cache_write | cache_read |
+|---|---|---|---|---|
+| 1 | 冷启动 | 2519 | 2490 | 15626 |
+| 2 | resume | **2** | 5574 | 15621 |
+| 3 | resume | **2** | 604 | 21195 |
+| 4 | resume | **2** | 616 | 21799 |
+
+**结论：续接流程缓存命中极好。** resume 轮 `input≈2`（几乎没有从头算的 token）—— 系统提示+工具+整段历史全走 `cache_read`；`cache_write` 越来越小（604/616，只写新追加的一小轮）。
+- 第1轮 `cache_read=15626` 已很高：Claude Code 自身系统提示+内置工具在账号上**全局共享缓存**，冷启动也读得到。
+- 为什么缓存友好：`--resume` 把前缀（系统+工具+历史）**逐字节原样重放** → 前缀稳定不打穿；我们没往前缀塞任何会变的东西；**§3.2 增量**让新轮很小 → 每轮 write 才几百。
+- **TTL 影响**：上表是热缓存。隔超过 TTL 再评论 → 缓存凉 → 回来那一轮把历史重 `write` 一次（一笔较大开销），之后转回 read，但**不失忆**。Max 20x 默认 **1h TTL**，保温窗口宽。
+
+### 7.1 push（我们） vs pull（Multica）的 token 账，其实不一定谁省
+
+两者**都用 `--resume`**，所以"历史随对话增长、每轮作为 cache_read 重读"这块**成本基本一样**。真正差异只在**每轮新增内容**：
+- **我们 push**：把（增量）评论塞进新轮 —— 新轮稍大，但**不需要额外往返**。
+- **Multica pull**：新轮很瘦，但 agent 要**多次工具往返**自取评论 —— 每次 pull = 一个 assistant 轮 + 返回数据，都吃 token。
+
+所以谁省取决于工作负载：**需要的上下文越多/越全，push 一次（之后缓存）越划算；只需一小片、历史超长，lean+pull 越划算。** 不存在普适赢家。
+- 我们现在是**混合**（push 保底 + 按需 pull），本就两头取优；而且 `task_usage` 已经把 input/cache/cost 落库，**任何时候都能在真实使用上量**，无需先造合成 A/B。
