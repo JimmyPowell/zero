@@ -78,6 +78,13 @@
       "when": 1781862997248,
       "tag": "0010_runtime_scope_concurrency_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1781869310771,
+      "tag": "0011_run_event_detail",
+      "breakpoints": true
     }
   ]
 }

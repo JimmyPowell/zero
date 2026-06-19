@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并执行日志详情化 + Codex/OpenCode 接入（feat/run-log-detail → main）🎉
+
+- 把 `feat/run-log-detail`（Phase 1 日志详情化 + Phase 2 Codex/OpenCode 接入）合入 main。分支基于 `ec75ff0`（已含我方 §3.1 MCP / §3.2 增量 / 运行时管理），在其上做 provider 分发 + 详情化，**完整保留** `mcpConfig`/`buildPrompt(full)`/`usage`（且 MCP 按 provider 门控：`spec.mcp ? writeMcpConfig : undefined`，只 claude 注入）。
+- **迁移 0011 加性**（`run_event` 加 `detail` text 列），dev 库已应用 → `db:migrate` no-op。
+- **冲突仅 `docs/progress.md`**：main 自基点起只改了 `dispatch.ts`+docs，分支没碰 `dispatch.ts`，所以 `daemon/index.ts` 等全部干净 auto-merge；我方 `bb1617d` newest-20 修复（在 `dispatch.ts`）被 auto-merge 保留。
+- **校验**：server/daemon/web typecheck + web build 全过；`db:migrate` no-op；端到端复跑（claude + MCP + 增量；opencode 真实链路）。
+
 ## 2026-06-19 · 上下文流程全面 e2e + 修复 push 窗口取最老 20 的 bug
 
 - **bug（测试揪出来的）**：`assembleContext` 注释写"最近 20 条"，实现却用 `asc + limit 20`（=**最老** 20 条）。issue ≤20 条无感，>20 条就错：冷启动/回退拿到最老评论而非最新；resume 增量基于最老窗口 → 新评论可能不在窗口里被漏掉。修复：`desc + limit 20` 取最新 20，再 `reverse()` 回时间正序供前缀计数/展示。
@@ -10,6 +17,29 @@
   - **B >20 评论**：push 封顶 20、最老的第1条被挤出窗口 → agent 自动调 `mcp__zero__zero_older_comments` 回拉、答出 BANANA42（pull 兜底闭环）。
   - **C 会话丢失**：篡改 session_id → daemon 检测失效、回退**全量** push、仍答出暗号B、写入新会话 id（不失忆）。
 - **文档**：`agent-context-model.md` 补 §6 会话模型（runtime/agent/session/任务关系图、两种 push 模式、20 限制何时生效、@-mention 多 agent）。
+## 2026-06-19 · Phase 2：接入 Codex / OpenCode（feat/run-log-detail 开发记录）
+
+接着 Phase 1 在同分支做（已由本次合并并入 main）。让 daemon 能像跑 Claude 一样直接调用 Codex / OpenCode 完成任务，并把它们的执行日志按同一套归一化回写。
+
+- **本机实测确认接入方式**：Codex `codex-cli 0.135.0`（ChatGPT 登录）= `codex exec --json`（点号事件 `thread.started`/`turn.*`/`item.*`，**stdin 必须关**否则卡读 stdin，走代理）；OpenCode `1.15.13`（DeepSeek/opencode-go）= `opencode run --format json`（`step_start`/`text`/`tool_use`/`step_finish`，`step_finish` 带 tokens **和真实 cost**）。
+- **daemon 多 provider 分发**：按 `agent.provider` 选 `runClaude`/`runCodex`/`runOpenCode`，去掉「只接 Claude」限制；各自处理 stdin / 模型形态 / 会话续接（claude `--resume`、codex `exec resume <id>`、opencode `-s <id>`）+ 续接失败回退全量新会话。
+- **新增 3 个文件**：`codex-adapter` / `opencode-adapter` / `adapter-util`，把各家原生 JSON 事件→统一 `RunEvent`（Phase 1 的 `text` 摘要 + `detail` 完整内容：完整命令/参数/输出/退出码/思考/文本）。server/web **零改动**，详情/可展开 UI/成本表自动覆盖三家。
+- **成本**：claude 用权威 `total_cost_usd`；opencode 用它给的真实 `cost`+tokens；codex 用 `turn.completed` tokens（无单价，cost 留空）。全部落 `task_usage`。
+- **实测**：adapter 单测 14/14；**OpenCode 全链路端到端 8/8**（真实 daemon 跑真实 `opencode`：`echo` 命令与输出进 detail、tokens 入 task_usage、run 成功）；daemon `tsc` 通过。
+- **Codex 端到端待办**：本机 codex 走 `wss://chatgpt.com/backend-api/codex/responses`，当前代理对该 WebSocket 仍 reset（HTTP 通、wss 不通）；adapter 已按 Multica 字段名+多兜底写好并单测，等代理放行后抓一次真实成功流最终校验。codex 运行时需「带代理 env 启动 daemon」。
+- **Phase 3（后话）**：某次执行改了哪些文件 / ±行数 / 每文件 diff / 文件预览。
+
+## 2026-06-19 · 执行日志详情化 Phase 1（feat/run-log-detail 开发记录）
+
+独立 worktree/分支，基于含运行时管理的 main（已由本次合并并入）。把执行日志从「只有一行摘要」做成可逐步深入查看：
+
+- **现状盘点**：我们日志架构其实早已对齐 Multica —— `run_event`（provider 无关、seq 有序）≈ Multica 的 `task_message`；daemon 里 adapter 把原生流→统一事件；已有 SSE 实时 + 历史回放 + 彩色条。差距只在：详情藏在 payload 里没露出、实时流没带详情、截断太狠、UI 行不可展开。
+- **采集更全（迁移 0011，加 `run_event.detail`，向后兼容）**：claude-adapter 每条事件产出 `text`=一行摘要 + `detail`=完整内容 —— 工具完整命令(Bash)/格式化参数(JSON)、完整工具输出、完整思考、完整文本、用量 token 明细；放宽原 2000/4000 截断（detail 上限 16000）。
+- **实时也带详情**：daemon events 接口落 `detail`，SSE publish + backlog 都带上，跑动中即可展开看完整内容（不必等刷新）。
+- **可展开 UI（RunLogOverlay）**：每行加展开箭头 —— 折叠两行摘要、展开 `<pre>` 看完整命令/参数/输出/思考；顶部活动条由「一事件一格」升级为「连续同类合并成按占比分段 + 可点击跳转 + 跑动中末段脉冲」；复制全部改用完整内容。
+- **多 provider 统一**：`detail` 是 provider 无关字段，Codex/OpenCode 接入时各自 adapter 填同一字段即可（Phase 2）。
+- **实测**：adapter 单测 18/18（各事件 text 摘要 + detail 完整）、API 往返 6/6（daemon 发带 detail 事件 → 落库 → 历史接口返回 detail）；server/web/daemon tsc + build 全过。
+- **下一批**：Phase 2 = Codex + OpenCode 真正执行 + 各自 adapter（去掉「只接 Claude」）；Phase 3（后话）= 某次执行改了哪些文件/±行数/每文件 diff/文件预览。
 
 ## 2026-06-19 · 合并运行时管理升级（feat/runtime-management → main）🎉
 

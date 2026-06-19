@@ -292,6 +292,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         tool: e.tool ?? null,
         toolName: e.toolName ?? null,
         text: e.text != null ? e.text.slice(0, 8000) : null,
+        detail: e.detail != null ? e.detail.slice(0, 20000) : null,
         payload: e.payload ?? null,
       }));
 
@@ -301,7 +302,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .values(rows)
         .onDuplicateKeyUpdate({ set: { seq: sql`seq` } });
 
-      // 实时分发给订阅中的 SSE 连接（精简负载，原始 payload 走 DB 回放）
+      // 实时分发给订阅中的 SSE 连接（含 detail，跑动中即可展开看完整内容；原始 payload 走 DB 回放）
       for (const r of rows) {
         publish(tk.id, {
           id: r.id,
@@ -310,6 +311,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           tool: r.tool,
           toolName: r.toolName,
           text: r.text,
+          detail: r.detail,
         });
       }
       return c.json({ ok: true, count: rows.length });

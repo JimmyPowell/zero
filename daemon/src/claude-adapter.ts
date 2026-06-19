@@ -101,6 +101,31 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
 }
 
+// 折叠态预览：压成一行 + 长度上限
+function preview(s: string, n = 160): string {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > n ? `${one.slice(0, n)}…` : one;
+}
+
+// 展开态完整内容上限（防 DB 膨胀；列为 TEXT）
+const DETAIL_CAP = 16000;
+function detailCap(s: string): string {
+  return s.length > DETAIL_CAP
+    ? `${s.slice(0, DETAIL_CAP)}\n…（已截断，共 ${s.length} 字）`
+    : s;
+}
+
+// 工具输入的完整展示：Bash 给命令本身，其它给格式化 JSON 参数
+function toolCallDetail(name: string, input: unknown): string {
+  const i = (input ?? {}) as Record<string, unknown>;
+  if (name === "Bash" && typeof i.command === "string") return detailCap(i.command);
+  try {
+    return detailCap(JSON.stringify(i, null, 2));
+  } catch {
+    return "";
+  }
+}
+
 // 一行 stream-json → 规范化事件数组
 export function claudeAdapter(obj: unknown): RunEvent[] {
   const out: RunEvent[] = [];
@@ -123,11 +148,17 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
       const content = o.message?.content ?? [];
       for (const b of content) {
         if (b?.type === "text" && b.text?.trim()) {
-          out.push({ type: "assistant_text", text: b.text, payload: b });
+          out.push({
+            type: "assistant_text",
+            text: preview(b.text),
+            detail: detailCap(b.text),
+            payload: b,
+          });
         } else if (b?.type === "thinking" && b.thinking?.trim()) {
           out.push({
             type: "thinking",
-            text: truncate(b.thinking, 4000),
+            text: preview(b.thinking),
+            detail: detailCap(b.thinking),
             payload: capPayload(b),
           });
         } else if (b?.type === "tool_use") {
@@ -136,6 +167,7 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
             tool: normalizeTool(b.name),
             toolName: b.name,
             text: toolCallText(b.name, b.input),
+            detail: toolCallDetail(b.name, b.input),
             payload: capPayload(b),
           });
         }
@@ -147,13 +179,14 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
       const content = o.message?.content ?? [];
       for (const b of content) {
         if (b?.type === "tool_result") {
+          const full = resultText(b.content);
           out.push({
             type: "tool_result",
-            text: truncate(resultText(b.content), 2000),
+            text: preview(full),
+            detail: detailCap(full),
             payload: capPayload({
               tool_use_id: b.tool_use_id,
               is_error: b.is_error,
-              content: truncate(resultText(b.content), 6000),
             }),
           });
         }
@@ -164,9 +197,23 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
     case "result": {
       const ms = num(o.duration_ms);
       const cost = num(o.total_cost_usd);
+      const u = (o.usage ?? {}) as Record<string, any>;
+      const tokenLine = [
+        u.input_tokens != null ? `输入 ${u.input_tokens}` : null,
+        u.output_tokens != null ? `输出 ${u.output_tokens}` : null,
+        u.cache_read_input_tokens != null
+          ? `缓存读 ${u.cache_read_input_tokens}`
+          : null,
+        u.cache_creation_input_tokens != null
+          ? `缓存写 ${u.cache_creation_input_tokens}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
       out.push({
         type: "usage",
         text: `用时 ${ms != null ? `${Math.round(ms / 100) / 10}s` : "?"} · ${o.num_turns ?? "?"} 轮${cost != null ? ` · $${cost.toFixed(4)}` : ""}`,
+        detail: tokenLine || null,
         payload: capPayload({
           usage: o.usage,
           total_cost_usd: o.total_cost_usd,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Filter, X, Check } from "lucide-react";
+import { Copy, Filter, X, Check, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +33,24 @@ const BAR_COLOR: Record<RunEventType, string> = {
   usage: "bg-amber-300",
   error: "bg-red-400",
 };
+
+// 顶部活动条分段：连续同类事件合并成一段（宽度按事件数占比）
+type Seg = { type: RunEventType; startSeq: number; count: number };
+function buildSegments(evs: RunEventRow[]): Seg[] {
+  const segs: Seg[] = [];
+  for (const e of evs) {
+    const last = segs[segs.length - 1];
+    if (last && last.type === e.type) last.count++;
+    else segs.push({ type: e.type, startSeq: e.seq, count: 1 });
+  }
+  return segs;
+}
+
+// 该事件是否有可展开的完整内容（detail 与一行摘要不同才值得展开）
+function hasDetail(e: RunEventRow): boolean {
+  const d = e.detail?.trim();
+  return !!d && d !== (e.text ?? "").trim();
+}
 
 // 每条事件左侧的类型标签
 function eventChip(ev: RunEventRow): {
@@ -148,7 +166,22 @@ export function RunLogOverlay({
   const [status, setStatus] = useState<RunStatus>(run.status);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const listRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef(new Map<number, HTMLLIElement>());
+
+  const toggleExpand = (seq: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+
+  const scrollToSeq = (seq: number) =>
+    rowRefs.current
+      .get(seq)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
 
   // 合并并按 seq 去重排序
   const upsert = (incoming: RunEventRow[]) =>
@@ -225,6 +258,7 @@ export function RunLogOverlay({
     const types = FILTER_TYPES[filter];
     return types ? events.filter((e) => types.includes(e.type)) : events;
   }, [events, filter]);
+  const segments = useMemo(() => buildSegments(shown), [shown]);
 
   const duration = fmtDuration(run);
   const pill = STATUS_PILL[status];
@@ -233,7 +267,7 @@ export function RunLogOverlay({
     const text = events
       .map((e) => {
         const c = eventChip(e);
-        return `#${e.seq + 1} [${c.label}] ${e.text ?? ""}`;
+        return `#${e.seq + 1} [${c.label}] ${e.detail || e.text || ""}`;
       })
       .join("\n");
     try {
@@ -319,13 +353,21 @@ export function RunLogOverlay({
           </button>
         </div>
 
-        {/* 彩色进度条 */}
-        {events.length > 0 && (
-          <div className="flex h-1.5 w-full gap-px px-5 pt-3">
-            {events.map((e) => (
-              <span
-                key={e.seq}
-                className={cn("h-full flex-1 rounded-sm", BAR_COLOR[e.type])}
+        {/* 顶部活动条：连续同类合并成按占比分段，可点击跳转，跑动中末段脉冲 */}
+        {segments.length > 0 && (
+          <div className="flex h-2 w-full items-stretch gap-px px-5 pt-3">
+            {segments.map((s, i) => (
+              <button
+                key={s.startSeq}
+                type="button"
+                title={`${eventChip({ type: s.type, toolName: null, tool: null } as RunEventRow).label} × ${s.count}`}
+                onClick={() => scrollToSeq(s.startSeq)}
+                style={{ flexGrow: s.count }}
+                className={cn(
+                  "h-full min-w-[3px] rounded-sm opacity-80 transition-opacity hover:opacity-100",
+                  BAR_COLOR[s.type],
+                  ACTIVE(status) && i === segments.length - 1 && "animate-pulse",
+                )}
               />
             ))}
           </div>
@@ -341,30 +383,64 @@ export function RunLogOverlay({
             <ol className="flex flex-col">
               {shown.map((e) => {
                 const c = eventChip(e);
+                const expandable = hasDetail(e);
+                const isOpen = expanded.has(e.seq);
                 return (
                   <li
                     key={e.seq}
-                    className="flex items-start gap-3 border-b border-border/40 px-3 py-2.5 last:border-0"
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(e.seq, el);
+                      else rowRefs.current.delete(e.seq);
+                    }}
+                    className="border-b border-border/40 last:border-0"
                   >
-                    <span
+                    <div
+                      onClick={
+                        expandable ? () => toggleExpand(e.seq) : undefined
+                      }
                       className={cn(
-                        "mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium",
-                        c.cls,
+                        "flex items-start gap-2.5 px-3 py-2.5",
+                        expandable && "cursor-pointer hover:bg-muted/40",
                       )}
                     >
-                      {c.label}
-                    </span>
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 whitespace-pre-wrap break-words text-sm text-foreground",
-                        c.mono && "font-mono text-[13px] text-muted-foreground",
+                      {expandable ? (
+                        <ChevronRight
+                          className={cn(
+                            "mt-1 size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
+                            isOpen && "rotate-90",
+                          )}
+                        />
+                      ) : (
+                        <span className="mt-1 size-3.5 shrink-0" />
                       )}
-                    >
-                      {e.text}
-                    </span>
-                    <span className="mt-0.5 shrink-0 font-mono text-xs text-muted-foreground/60">
-                      #{e.seq + 1}
-                    </span>
+                      <span
+                        className={cn(
+                          "mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium",
+                          c.cls,
+                        )}
+                      >
+                        {c.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "min-w-0 flex-1 break-words text-sm text-foreground",
+                          isOpen ? "whitespace-pre-wrap" : "line-clamp-2",
+                          c.mono && "font-mono text-[13px] text-muted-foreground",
+                        )}
+                      >
+                        {e.text}
+                      </span>
+                      <span className="mt-0.5 shrink-0 font-mono text-xs text-muted-foreground/60">
+                        #{e.seq + 1}
+                      </span>
+                    </div>
+                    {expandable && isOpen && (
+                      <div className="px-3 pb-3 pl-[2.4rem]">
+                        <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
+                          {e.detail}
+                        </pre>
+                      </div>
+                    )}
                   </li>
                 );
               })}

@@ -1,0 +1,1 @@
+ALTER TABLE `run_event` ADD `detail` text;
