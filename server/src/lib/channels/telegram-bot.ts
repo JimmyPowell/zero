@@ -211,6 +211,25 @@ async function handleUpdate(u: any): Promise<void> {
 
 let running = false;
 let offset = 0;
+let commandsSet = false;
+
+// 注册命令菜单。在「连上之后」调用并重试，避免启动瞬时抖动导致静默失败。
+async function registerCommands(): Promise<void> {
+  try {
+    await tgApi("setMyCommands", {
+      commands: [
+        { command: "issues", description: "列出最近 issue 并点选" },
+        { command: "use", description: "选中某个 issue（如 /use 12）" },
+        { command: "show", description: "看 issue 详情" },
+        { command: "help", description: "帮助" },
+      ],
+    });
+    commandsSet = true;
+    console.log("[telegram] 命令菜单已注册");
+  } catch (e) {
+    console.error("[telegram] setMyCommands 失败（下轮重试）:", (e as Error).message);
+  }
+}
 
 async function pollLoop(): Promise<void> {
   while (running) {
@@ -220,6 +239,8 @@ async function pollLoop(): Promise<void> {
         timeout: 25,
         allowed_updates: ["message", "callback_query"],
       });
+      // 连通后再注册命令（成功才置位；失败下轮自动重试）
+      if (!commandsSet) await registerCommands();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const u of updates as any[]) {
         offset = u.update_id + 1;
@@ -242,16 +263,7 @@ export function startTelegramBot(): void {
     return;
   }
   running = true;
-  void pollLoop();
-  // 注册命令菜单（聊天框「/」可见）
-  void tgApi("setMyCommands", {
-    commands: [
-      { command: "issues", description: "列出最近 issue 并点选" },
-      { command: "use", description: "选中某个 issue（如 /use 12）" },
-      { command: "show", description: "看 issue 详情" },
-      { command: "help", description: "帮助" },
-    ],
-  }).catch(() => {});
+  void pollLoop(); // 命令菜单在 pollLoop 连通后注册（带重试）
   console.log(
     `[telegram] 已启动长轮询${config.telegram.proxy ? "（经代理）" : ""}`,
   );
