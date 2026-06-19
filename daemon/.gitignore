@@ -1,0 +1,5 @@
+node_modules
+zero-daemon
+*.local
+.env
+.DS_Store

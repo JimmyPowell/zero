@@ -1,0 +1,16 @@
+{
+  "name": "zero-daemon",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "bin": { "zero-daemon": "src/index.ts" },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/index.ts --compile --outfile zero-daemon"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.3"
+  }
+}
