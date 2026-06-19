@@ -2,6 +2,18 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · Phase 2：接入 Codex / OpenCode（同分支 feat/run-log-detail，待合并）
+
+接着 Phase 1 在同分支做，**未合并**。让 daemon 能像跑 Claude 一样直接调用 Codex / OpenCode 完成任务，并把它们的执行日志按同一套归一化回写。
+
+- **本机实测确认接入方式**：Codex `codex-cli 0.135.0`（ChatGPT 登录）= `codex exec --json`（点号事件 `thread.started`/`turn.*`/`item.*`，**stdin 必须关**否则卡读 stdin，走代理）；OpenCode `1.15.13`（DeepSeek/opencode-go）= `opencode run --format json`（`step_start`/`text`/`tool_use`/`step_finish`，`step_finish` 带 tokens **和真实 cost**）。
+- **daemon 多 provider 分发**：按 `agent.provider` 选 `runClaude`/`runCodex`/`runOpenCode`，去掉「只接 Claude」限制；各自处理 stdin / 模型形态 / 会话续接（claude `--resume`、codex `exec resume <id>`、opencode `-s <id>`）+ 续接失败回退全量新会话。
+- **新增 3 个文件**：`codex-adapter` / `opencode-adapter` / `adapter-util`，把各家原生 JSON 事件→统一 `RunEvent`（Phase 1 的 `text` 摘要 + `detail` 完整内容：完整命令/参数/输出/退出码/思考/文本）。server/web **零改动**，详情/可展开 UI/成本表自动覆盖三家。
+- **成本**：claude 用权威 `total_cost_usd`；opencode 用它给的真实 `cost`+tokens；codex 用 `turn.completed` tokens（无单价，cost 留空）。全部落 `task_usage`。
+- **实测**：adapter 单测 14/14；**OpenCode 全链路端到端 8/8**（真实 daemon 跑真实 `opencode`：`echo` 命令与输出进 detail、tokens 入 task_usage、run 成功）；daemon `tsc` 通过。
+- **Codex 端到端待办**：本机 codex 走 `wss://chatgpt.com/backend-api/codex/responses`，当前代理对该 WebSocket 仍 reset（HTTP 通、wss 不通）；adapter 已按 Multica 字段名+多兜底写好并单测，等代理放行后抓一次真实成功流最终校验。codex 运行时需「带代理 env 启动 daemon」。
+- **Phase 3（后话）**：某次执行改了哪些文件 / ±行数 / 每文件 diff / 文件预览。
+
 ## 2026-06-19 · 执行日志详情化 Phase 1（分支 feat/run-log-detail，待合并）
 
 独立 worktree/分支，基于最新 main（含运行时管理），**未合并**（由用户合并）。把执行日志从「只有一行摘要」做成可逐步深入查看：
