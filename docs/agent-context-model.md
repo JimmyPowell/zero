@@ -1,0 +1,64 @@
+# Agent 上下文模型：Zero vs Multica（对比 + 演进方向）
+
+> 2026-06-19 整理。本文记录两套"给 coding agent 喂上下文"的模型对比、各自取舍，以及 Zero 的演进方向。
+> 结论先行：**这是一道经典的 push(eager) vs pull(lazy) 工程取舍**，不是谁对谁错。Zero 现状赢在"确定性 / 体感 / 可审计"，Multica 赢在"可扩展性"。
+
+## 0. 一句话区分
+
+| | 世界状态（issue / 评论 / repo）怎么到 agent | 推理连续性 |
+|---|---|---|
+| **Zero** | **厚 push**：服务端把 issue + 最近 20 条评论 + repo + work 模式**预拼进 prompt** | session resume（复用 `session_id`，`--resume`） |
+| **Multica** | **瘦 push + agent 自取(pull)**：prompt 只塞 issue 正文 + skills 文件；评论历史**命令 agent 自己调 CLI 拉** | session resume（条件性，易回退新会话） |
+
+**关键修正**：Multica 并非"每次回复都开新会话"——它也做 `--resume`。"上下文缺很多"的真正来源是：
+1. 评论是 **pull**：agent 不老实调 `multica issue comment list` 就缺/过时（Multica 自己代码注释承认这是"agents acting on stale or incomplete instructions 的最常见原因"）。
+2. resume 条件苛刻（`force_fresh_session`、poisoned 失败、**跨 runtime 不复用**）→ 一回退就"失忆"。
+
+### 证据
+- Multica：`server/internal/daemon/execenv/runtime_config.go:258`（强制 agent 自拉评论，"mandatory, not optional"）；`migrations/020_task_session.up.sql`（session_id/work_dir，resume）；`internal/daemon/daemon.go:1503/1523`（resume + 失败回退）。
+- Zero：`server/src/lib/dispatch.ts:83`（注释"服务端主动拼，不靠 agent 自取"）、`:100-131`（最近 20 条评论）、`:56-78`（复用上次 session_id）。
+- 三方佐证：[mem0.ai 复盘](https://mem0.ai/blog/how-memory-works-in-a-multi-agent-system-inside-multica)（"stale snapshots — agents miss new comments mid-task"）；GitHub Issue [#1579](https://github.com/multica-ai/multica/issues/1579)（执行/报告质量致信任流失）、[#1463](https://github.com/multica-ai/multica/issues/1463)（状态卡 working）。
+
+## 1. push vs pull 取舍对照
+
+| 维度 | Zero：push / 预拼 | Multica：pull / 自取 |
+|---|---|---|
+| 上下文到达 | 服务端保证塞进，agent 不可能漏看 | 靠 agent 自觉拉，会漏 / 会过时 |
+| 确定性 / 可审计 | 高：每次 run 看到什么是确定的、可落库回放 | 低：实际读了多少不确定 |
+| 历史规模 | 固定窗口（20 条），长线程会截断 | 可分页拉深、拉关联 issue，更扛大历史 |
+| 实时性 | 派发那刻快照，跑动中新评论看不到 | agent 动手前可重拉最新态 |
+| 启动开销 | 一次拼好，快、省往返 | 多次 CLI 往返，慢、费 token，还要先"发现"命令 |
+| 对模型能力要求 | 低：弱模型也能拿到全量 | 高：依赖 agent 工具调用纪律 |
+| Prompt 体积 | 每次都背 20 条，可能冗余 / 膨胀 | 瘦 prompt，按需拉 |
+
+## 2. 整体使用感（分阶段）
+
+- **个人 / 小项目 / 演示 / 评论不长**：Zero 的 push 明显更好用，"它记得我说的"是最高频体感，几乎不翻车；这恰是 Multica 公开吐槽最集中处。
+- **大团队 / 超长线程 / 多 repo / 长跑任务**：Multica 的 pull 更能扩展；Zero"固定 20 条 + 每轮全量"会先撞截断 + 膨胀。
+
+"每个 issue 像一个完整任务"——其实两边都是 **issue 为中心 + session-per-(agent,issue)**，任务粒度一致；真正分野只在上下文送达方式。Zero 不需要为此改架构。
+
+## 3. Zero 的演进方向（按性价比）
+
+1. **混合模型（push 保底 + pull 加深）**：保留厚 push 当地板，再给 agent 一个工具/CLI 按需拉更老评论、关联 issue、上次 run 的 diff。拿到扩展性又不丢确定性。
+2. **resume 时只推增量**（✅ 已实现，见 §4）：会话已记得旧评论，resume 那轮只塞"上次之后的新评论"，而非 20 条全量 → 省 token、去冗余。
+3. **滚动摘要**替代硬截断：超窗口的老评论压成 summary + 最近 N 条原文，避免"第 21 条直接消失"。
+4. **跑动中新评论可见**：派发后到来的评论给运行中 agent 一个信号 / 检查点重拉（push/pull 通病）。
+5. **push 里带更多工件**：上次 run 摘要 / 最近 diff / 当前分支态，续接不冷启动。
+6. **token 预算**：聊得多的 issue 给 token-aware 上限 + 摘要。
+7. **会话治理**：学 Multica 的 `force_fresh_session` + poisoned 状态排除，比当前单一兜底更细。
+8. **把"可审计"做成卖点**：push 模型天然能把每次 run 的完整输入快照落库 → 直接喂 skills eval / 质量门控方向，这是 pull 模型难做到的差异化。
+
+## 4. §3.2 增量推送 —— 实现说明
+
+**目标**：resume（续接已有会话）那一轮，prompt 只带"上次之后的新评论"，旧评论已在会话记忆里不再重复；但**新会话 / 回退到新会话**时仍带全量，避免失忆。
+
+**约束（关键）**：daemon 在 resume 失败时会用**同一份 prompt** 在新会话里重跑（`daemon/src/index.ts` tick 的回退分支）。所以不能无脑把 prompt 砍成增量——回退那次必须是**全量**。
+
+**做法**：
+- 服务端 `assembleContext(issueId, { agentId, resuming })` 照常返回**全量**最近 20 条评论，外加 `resumeFromIndex`：续接会话上一轮已看过的"前缀评论条数"（截止点 = 上一条已结束 task 的 `startedAt`，取不到回退 `createdAt`；用 `<` 比较保证宁可多带不漏带）。非续接时 `resumeFromIndex = 0`。
+- daemon `buildPrompt(claim, { full })`：
+  - resume 尝试：`full=false` → 只渲染 `comments.slice(resumeFromIndex)`，标题"## New comments since your last turn"，并提示"更早的 N 条已在你的上下文里"。
+  - 新会话首跑 / resume 失败回退：`full=true` → 渲染全量"## Conversation so far"。
+
+**安全性**：截止点用 `startedAt` 且 `<` 比较 → 只会多带（冗余安全），绝不漏带 agent 没见过的评论。极端 >20 条历史时，`resumeFromIndex` 基于当前 20 窗口内早于截止点的条数，退化为"窗口内增量"，仍正确。

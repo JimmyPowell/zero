@@ -115,7 +115,11 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       .from(schema.agent)
       .where(eq(schema.agent.id, cand.agentId))
       .limit(1);
-    const context = await assembleContext(cand.issueId);
+    // resuming：本任务带着上一轮 session_id → 续接；据此让 assembleContext 只标记增量评论
+    const context = await assembleContext(cand.issueId, {
+      agentId: cand.agentId,
+      resuming: !!cand.sessionId,
+    });
 
     return c.json({
       task: {

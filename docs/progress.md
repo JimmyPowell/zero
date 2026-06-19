@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 上下文增量推送（resume 只推新增评论）+ 模型对比文档
+
+- **文档**：新增 `docs/agent-context-model.md` —— Zero(厚 push) vs Multica(瘦 push + agent 自取) 的上下文模型对比、push/pull 取舍、使用感分析、8 条演进方向（含证据与三方来源）。
+- **优化 #2 增量推送**（演进方向 §3.2）：续接会话那轮只把"上次之后的新增评论"塞进 prompt，旧评论已在会话记忆里不再重复 → 省 token、去冗余。
+  - 服务端 `assembleContext(issueId,{agentId,resuming})` 返回全量 20 条 + `resumeFromIndex`（截止点 = 上一条已结束 task 的 `startedAt`，`<` 比较 → 宁多带不漏带）；`daemon.ts` claim 传 `resuming=!!sessionId`。
+  - daemon `buildPrompt(claim,{full})`：resume 尝试 `full=false` 只渲染 `comments.slice(resumeFromIndex)`（标题"New comments since your last turn"+"N earlier…"提示）；**新会话首跑 / resume 失败回退** `full=true` 渲染全量（避免新会话失忆）。
+  - `buildPrompt` 导出 + 入口加 `import.meta.main` 守卫（可被单测 import 而不启动 daemon）。
+- **验证**：server/daemon typecheck 全过；`buildPrompt` 单测（增量/全量/首跑三态断言通过）；`resumeFromIndex` 对真实 #11 数据正确（fresh=0、resume=2）；**真机 resume 端到端**：让 agent 复述上一条回复，返回 `merge-stream-ok`（上一轮产物）—— 证明只推增量也不丢连续性（记忆在会话里）。
+
 ## 2026-06-19 · DB 连接钉死 UTC（`timezone=Z`，部署无关）
 
 - **背景**：前一条修复后发现「能正确」其实依赖一个隐含巧合——server 进程恰好跑在 UTC。`mysql2` 读写 DATETIME 默认按**运行进程所在时区**翻译；进程在 UTC 则存量存成 UTC 墙钟、读写自洽，但**换到 CST 环境重启/部署**会开始把本地墙钟（如 `17:55`）写盘，与老数据（`09:55` UTC）混淆 → 8 小时错乱。

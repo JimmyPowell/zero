@@ -125,6 +125,8 @@ interface Claim {
       baseBranch: string;
     } | null;
     work?: WorkSpec;
+    // 续接会话时，前 resumeFromIndex 条评论已在上一轮上下文里（增量推送用）
+    resumeFromIndex?: number;
   };
 }
 
@@ -253,7 +255,9 @@ function startPicker() {
 }
 
 // 把服务端装配好的上下文拼成给 agent 的 prompt
-function buildPrompt(claim: Claim): string {
+// opts.full=false 且在续接会话时只渲染增量评论（旧评论已在会话记忆里）；
+// full=true（新会话首跑 / resume 失败回退新会话）渲染全量，避免失忆。
+export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
   const { agent, context } = claim;
   const L: string[] = [];
   L.push(`You are "${agent?.name}", an agent on the Zero platform.`);
@@ -261,9 +265,20 @@ function buildPrompt(claim: Claim): string {
   L.push("");
   L.push(`# Issue ZERO-${context?.issue.number}: ${context?.issue.title}`);
   if (context?.issue.description) L.push(context.issue.description);
-  if (context?.comments.length) {
-    L.push("\n## Conversation so far");
-    for (const cm of context.comments) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
+  const all = context?.comments ?? [];
+  const from = context?.resumeFromIndex ?? 0;
+  const delta = !opts.full && from > 0 && from < all.length;
+  const shown = delta ? all.slice(from) : all;
+  if (shown.length) {
+    if (delta) {
+      L.push(
+        `\n(${from} earlier comment(s) are already in your conversation context from previous turns.)`,
+      );
+      L.push("## New comments since your last turn");
+    } else {
+      L.push("\n## Conversation so far");
+    }
+    for (const cm of shown) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
   }
   const work = context?.work;
   if (work?.mode === "repo") {
@@ -408,7 +423,8 @@ async function tick(server: string, token: string) {
       });
       return;
     }
-    const prompt = buildPrompt(claim);
+    // 续接会话 → 只推增量评论（full=false）；新会话首跑 → 全量（full=true）
+    const prompt = buildPrompt(claim, { full: !priorSession });
     // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
     const reporter = makeReporter(async (events) => {
       await post(server, token, `/daemon/tasks/${taskId}/events`, { events });
@@ -419,15 +435,15 @@ async function tick(server: string, token: string) {
       { model: claim.agent.model, sessionId: priorSession },
       reporter,
     );
-    // 会话失效（换目录/过期/被删）→ 新会话重跑；上下文已全在 prompt 里，不失忆
+    // 会话失效（换目录/过期/被删）→ 新会话重跑：必须用全量 prompt（新会话无记忆），否则失忆
     if (
       !r.ok &&
       priorSession &&
       /no conversation found|session id/i.test(r.error ?? "")
     ) {
-      console.log(`会话 ${priorSession} 失效，改用新会话重跑`);
+      console.log(`会话 ${priorSession} 失效，改用新会话重跑（全量上下文）`);
       r = await runClaude(
-        prompt,
+        buildPrompt(claim, { full: true }),
         cwd,
         { model: claim.agent.model },
         reporter,
@@ -570,11 +586,14 @@ function status() {
   console.log("未运行。");
 }
 
-const SUBS = ["start", "stop", "status", "run"];
-const raw = process.argv[2] ?? "";
-const sub = SUBS.includes(raw) ? raw : "start";
+// 仅作为 CLI 直接执行时跑分发；被 import（如单测 buildPrompt）时不触发启动
+if (import.meta.main) {
+  const SUBS = ["start", "stop", "status", "run"];
+  const raw = process.argv[2] ?? "";
+  const sub = SUBS.includes(raw) ? raw : "start";
 
-if (sub === "stop") stop();
-else if (sub === "status") status();
-else if (sub === "run") await worker();
-else start();
+  if (sub === "stop") stop();
+  else if (sub === "status") status();
+  else if (sub === "run") await worker();
+  else start();
+}

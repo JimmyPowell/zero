@@ -81,7 +81,12 @@ export async function enqueueTaskForIssue(
 }
 
 // 装配发给 agent 的结构化上下文（服务端主动拼，不靠 agent 自取）
-export async function assembleContext(issueId: string) {
+// opts.resuming + opts.agentId：续接已有会话时，算出"上一轮已看过的前缀评论条数"
+// resumeFromIndex，daemon 据此在 resume 那轮只推增量评论（旧的已在会话记忆里）。
+export async function assembleContext(
+  issueId: string,
+  opts?: { agentId?: string; resuming?: boolean },
+) {
   const [iss] = await db
     .select({
       number: schema.issue.number,
@@ -162,6 +167,34 @@ export async function assembleContext(issueId: string) {
       ? { mode: "dir", path: iss.workDir }
       : { mode: "empty" };
 
+  // 增量推送：续接会话时，找上一条已结束 task 的起跑时刻当截止点，
+  // 算出当前 20 条窗口里"早于截止点"的前缀条数（已在上一轮上下文里）。
+  // 用 startedAt（取不到回退 createdAt）+ `<` 比较：宁可多带，绝不漏带 agent 没见过的评论。
+  let resumeFromIndex = 0;
+  if (opts?.resuming && opts.agentId) {
+    const [prior] = await db
+      .select({
+        startedAt: schema.task.startedAt,
+        createdAt: schema.task.createdAt,
+      })
+      .from(schema.task)
+      .where(
+        and(
+          eq(schema.task.issueId, issueId),
+          eq(schema.task.agentId, opts.agentId),
+          inArray(schema.task.status, ["succeeded", "failed"]),
+        ),
+      )
+      .orderBy(desc(schema.task.createdAt))
+      .limit(1);
+    const cutoff = prior?.startedAt ?? prior?.createdAt ?? null;
+    if (cutoff) {
+      resumeFromIndex = comments.filter(
+        (c) => c.createdAt != null && c.createdAt < cutoff,
+      ).length;
+    }
+  }
+
   return {
     issue: {
       number: iss.number,
@@ -177,5 +210,7 @@ export async function assembleContext(issueId: string) {
     })),
     repo,
     work,
+    // daemon: resume 那轮只渲染 comments.slice(resumeFromIndex)；新会话/回退渲染全量
+    resumeFromIndex,
   };
 }
