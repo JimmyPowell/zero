@@ -2,6 +2,12 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并「最新活动时间」+ 搜索聚焦修复
+
+- 合并分支 `feat/issue-last-activity-time`：issue 列表/搜索结果右侧、详情右栏显示**最新活动时间** —— `lastActivityAt = COALESCE(MAX(issue_event.created_at), issue.created_at)`（任意事件：评论/模型回复/状态变更/执行），**列表仍按创建倒序、不重排**（走现成索引 `idx_issue_event_issue`）。
+- 搜索命令面板打开自动聚焦输入框（之前键入不进搜索框）。
+- 三方合并（main 的 Markdown/默认进行中/毫秒精度 × 分支的活动时间）自动完成无冲突；server/web `tsc` + build 全过，运行中服务已热重载（实测新建 issue 返回 `status=in_progress` + `lastActivityAt`）。
+
 ## 2026-06-19 · 评论 Markdown 渲染 + 默认进行中 + 时间线毫秒排序
 
 - **Markdown 渲染**：引入 `react-markdown` + `remark-gfm` + `@tailwindcss/typography`，时间线评论按 Markdown 渲染（标题/粗体/列表/代码/表格…）。新增 `components/Markdown.tsx`。
