@@ -111,6 +111,9 @@ export interface CreateIssuePayload {
   priority?: IssuePriority;
   assigneeType?: "member" | "agent";
   assigneeId?: string;
+  repoId?: string;
+  baseBranch?: string;
+  workDir?: string;
 }
 
 export interface Repo {
@@ -130,6 +133,7 @@ export interface IssueRepoRef {
 
 export interface IssueDetail extends Issue {
   baseBranch: string | null;
+  workDir: string | null;
   repo: IssueRepoRef | null;
 }
 
@@ -182,6 +186,7 @@ export interface UpdateIssuePayload {
   assigneeId?: string | null;
   repoId?: string | null;
   baseBranch?: string | null;
+  workDir?: string | null;
 }
 
 export type AgentProvider = "claude_code" | "codex" | "opencode";

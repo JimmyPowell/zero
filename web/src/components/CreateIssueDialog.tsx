@@ -7,6 +7,10 @@ import {
   AssigneePicker,
   type AssigneeValue,
 } from "@/components/issue/AssigneePicker";
+import {
+  BindingPicker,
+  type BindingValue,
+} from "@/components/issue/BindingPicker";
 import { useUi } from "@/lib/ui-store";
 import {
   api,
@@ -35,6 +39,7 @@ export function CreateIssueDialog({
   const [status, setStatus] = useState<IssueStatus>("in_progress");
   const [priority, setPriority] = useState<IssuePriority>("none");
   const [assignee, setAssignee] = useState<AssigneeValue>(null);
+  const [binding, setBinding] = useState<BindingValue>({ kind: "none" });
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +78,7 @@ export function CreateIssueDialog({
     setTitle("");
     setDescription("");
     setStatus("in_progress");
+    setBinding({ kind: "none" });
     setPriority("none");
     setAssignee(null);
     setError(null);
@@ -91,6 +97,10 @@ export function CreateIssueDialog({
         priority,
         assigneeType: assignee?.type,
         assigneeId: assignee?.id,
+        ...(binding.kind === "repo"
+          ? { repoId: binding.repoId, baseBranch: binding.baseBranch }
+          : {}),
+        ...(binding.kind === "dir" ? { workDir: binding.workDir } : {}),
       });
       onCreated(issue);
       reset();
@@ -135,7 +145,7 @@ export function CreateIssueDialog({
         </div>
 
         {/* 属性胶囊行 */}
-        <div className="flex flex-wrap items-center gap-2 px-5 pb-4">
+        <div className="flex flex-wrap items-center gap-2 px-5 pb-3">
           <StatusPicker value={status} onChange={setStatus} />
           <PriorityPicker value={priority} onChange={setPriority} />
           <AssigneePicker
@@ -143,6 +153,18 @@ export function CreateIssueDialog({
             agents={agents}
             value={assignee}
             onChange={setAssignee}
+          />
+        </div>
+
+        {/* 工作区绑定（仓库 / 工作目录 / 不绑） */}
+        <div className="px-5 pb-4">
+          <p className="mb-1.5 text-xs text-muted-foreground">
+            {t("binding.label")}
+          </p>
+          <BindingPicker
+            workspaceId={workspaceId}
+            value={binding}
+            onChange={setBinding}
           />
         </div>
 

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { StatusPicker } from "@/components/issue/StatusPicker";
 import { PriorityPicker } from "@/components/issue/PriorityPicker";
 import { AssigneePicker } from "@/components/issue/AssigneePicker";
-import { RepoBinding } from "@/components/issue/RepoBinding";
+import { BindingPicker } from "@/components/issue/BindingPicker";
 import { Timeline } from "@/components/issue/Timeline";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
@@ -266,12 +266,27 @@ export function IssueDetailView() {
 
           <div className="my-4 h-px bg-border" />
 
-          <SectionLabel>{t("prop.repo")}</SectionLabel>
-          <RepoBinding
+          <SectionLabel>{t("binding.label")}</SectionLabel>
+          <BindingPicker
             workspaceId={wsId!}
-            repo={issue.repo}
-            baseBranch={issue.baseBranch}
-            onPatch={(p) => void patch(p)}
+            issueNumber={issue.number}
+            value={
+              issue.repo
+                ? {
+                    kind: "repo",
+                    repoId: issue.repo.id,
+                    baseBranch: issue.baseBranch ?? issue.repo.defaultBranch,
+                  }
+                : issue.workDir
+                  ? { kind: "dir", workDir: issue.workDir }
+                  : { kind: "none" }
+            }
+            onChange={(v) => {
+              if (v.kind === "repo")
+                void patch({ repoId: v.repoId, baseBranch: v.baseBranch });
+              else if (v.kind === "dir") void patch({ workDir: v.workDir });
+              else void patch({ repoId: null, workDir: null });
+            }}
           />
 
           <div className="my-4 h-px bg-border" />
