@@ -5,8 +5,9 @@
 ## 2026-06-19 · B2b daemon（本地运行时）完成 —— B2 全跑通
 
 - `daemon/`（Bun/TS）：发现本地 `claude`/`codex`/`opencode` → 用配对令牌 `POST /daemon/hello` 连上 → 每 20s 心跳；可 `bun build --compile` 出单文件。
-- **端到端实测**：daemon 连上后本机三个 CLI 全部发现，runtime 在 Web 端变「在线」+ 显示能力。
-- 运行：`cd daemon && bun install && bun run src/index.ts --server <url> --token <令牌>`（见 `daemon/README.md`）。
+- **后台常驻**：`start`(分离子进程 + 写 `~/.zero/daemon.pid` + 日志 `~/.zero/daemon.log`，忽略 SIGHUP 关终端不退) / `stop` / `status` / `run`(前台调试)。
+- **端到端实测**：daemon 连上后本机三个 CLI 全部发现，runtime 在 Web 端变「在线」；start/status/stop 生命周期实测通过。
+- 运行：`cd daemon && bun install && bun run src/index.ts start --server <url> --token <令牌>`（见 `daemon/README.md`）。
 - B3 将在此基础上认领 task、在 issue 的 worktree 里跑 agent、流式回传时间线。
 
 ## 2026-06-19 · B2a 运行时管理（服务端 + UI）完成
