@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 修复「最新活动时间」偏移 8 小时（UTC/时区）
+
+- **现象**：盖览列表 / 搜索面板 / 详情右栏的「最新活动时间」普遍比真实早 ~8 小时（如刚评论却显示「8 小时前」），且详情页「最新活动」比时间线事件还早。
+- **根因**：`createdAt/updatedAt/事件 createdAt` 是 Drizzle 直接列，mysql2 按 UTC 还原成 `Date` → `toISOString()` **自带 Z**，前端解析正确；但 `lastActivityAt` 是原始 `sql<string>` 聚合（`COALESCE(MAX(...))`），mysql2 **原样返回无时区裸串**（`"2026-06-19 09:39:10.446"`）。前端 `new Date(裸串)` 按**本地时区**(UTC+8)解读 → 偏移 8 小时。
+- **修复**：`issues.ts` 加 `isoTime()`，把 `shape()` 输出的 `createdAt/updatedAt/lastActivityAt` 统一规范成带 `Z` 的 ISO（裸串当 UTC 补 `Z`，与列口径一致）。一处改动覆盖 list/search/detail（`shapeDetail` spread `shape`）。前端无需改。
+- **实测**：`lastActivityAt` 现与最新事件 `createdAt` **逐字节一致**（`09:39:10.446Z`），相对时间正确（12 分钟前）。
+- **附记**：OrbStack 的 MySQL 容器时钟比宿主慢 8h（`UTC_TIMESTAMP()` 偏移），但写入都走宿主 `new Date()`，不污染存量数据；属环境瑕疵，未处理。
+
 ## 2026-06-19 · 合并实时执行日志（feat/agent-exec-stream → main）🎉
 
 - **功能**：执行过程**实时流式**进时间线浮层 —— provider 无关的 `RunEvent` 协议；daemon `claude-adapter` 解析 `claude -p --output-format stream-json --verbose`，`reporter` 批量按单调 `seq` 上报；server `run_event` 表（`unique(task,seq)` 幂等）+ `run-bus` + SSE 流端点；前端 `RunLogOverlay`（磨砂浮层）+ 详情页运行卡片 / 活动态 3s 轮询。

@@ -108,6 +108,18 @@ function baseIssueQuery() {
 
 type IssueRow = Awaited<ReturnType<typeof baseIssueQuery>>[number];
 
+// 把时间值统一规范成带 Z 的 ISO 字符串，让前端 `new Date(iso)` 当成绝对时刻解析。
+// Drizzle 直接列经 mysql2 已是 Date（按 UTC 还原 → toISOString 自带 Z）；但 lastActivityAt
+// 是原始 SQL 聚合，mysql2 原样返回「无时区裸串」（如 "2026-06-19 09:39:10.446"），前端会按
+// 本地时区误读偏移 8 小时。DB 存的是 UTC 墙钟，这里同样当成 UTC 解析（补 Z），与列口径一致。
+function isoTime(v: Date | string | null | undefined): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString();
+  const s = String(v).replace(" ", "T");
+  const hasTz = /[zZ]$|[+-]\d\d:?\d\d$/.test(s);
+  return new Date(hasTz ? s : s + "Z").toISOString();
+}
+
 function shape(row: IssueRow) {
   return {
     id: row.id,
@@ -125,9 +137,9 @@ function shape(row: IssueRow) {
             avatarUrl: row.assigneeAvatar,
           }
         : null,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    lastActivityAt: row.lastActivityAt,
+    createdAt: isoTime(row.createdAt),
+    updatedAt: isoTime(row.updatedAt),
+    lastActivityAt: isoTime(row.lastActivityAt),
   };
 }
 
