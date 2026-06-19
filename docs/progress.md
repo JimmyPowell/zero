@@ -2,6 +2,19 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 接入 Kimi CLI（feat/kimi-cli 开发记录，未合并）
+
+把 Moonshot 的 **Kimi CLI** 作为独立 provider 接进来（不是"claude 改端点改模型名"，是真的认它这个 agent）。分支 `feat/kimi-cli`（基于 main `9a010a5`），合并由用户来。详见 [kimi-integration.md](./kimi-integration.md)。
+
+- **本机实测**：`uv tool install kimi-cli`（v1.47.0，`~/.local/bin/kimi`）；无头 `kimi --print --output-format stream-json -y -p`；输出是 **OpenAI-chat 风格逐条消息**（`role:assistant/tool` + `tool_calls[].function.arguments`）——与 claude/opencode 都不同，**新写 `kimiAdapter`**。sessionId 在 **stderr**（`kimi -r <id>` 续接）；**此模式不吐 usage/cost**。鉴权：`kimi login`（订阅账号）或 `~/.kimi/config.toml` 写 key（本机用 Kimi Code 国际服 key，模型 `kimi-for-coding`）。
+- **daemon**：新 `kimi-adapter.ts` + `runKimi`（stdin 关、stderr 抓 sessionId、usage 置空）+ `discover()`/`PROVIDERS` 各加 `kimi`（mcp:false）；启动把 `~/.local/bin` 并入 PATH（否则找不到 uv 装的 kimi）。
+- **server**：provider 枚举 + `providerEnum` 加 `kimi`；迁移 **0013_agent_provider_kimi**（加性 MODIFY，dev 库已应用）。
+- **web**：`AgentProvider`/`PROVIDERS`/`providerLabel` 加 `Kimi`。
+- **模型字段坑**：kimi 的 `-m` 要配置里的 model **键**（如 `kimicode/kimi-for-coding`），不是裸名（裸名报 `LLM not set`）；**model 留空即用 default_model**（推荐）。
+- **实测**：adapter 单测 **8/8**；**全链路 e2e 6/6**（真实 daemon 跑真实 `kimi`：命令/输出进 detail、run 成功）；server/daemon/web `tsc` 全过。测试数据已清。
+- **限制**：Kimi 无成本数据（task_usage 空）；MCP 本期未接。
+- **合并提示**：与 `feat/codebuddy-cli` 各自独立改同几处（provider 枚举/`PROVIDERS`/`providerLabel`/AgentProvider，皆加性），迁移 0012(codebuddy)/0013(kimi) 与 main 现 0012(notifications) 同号——合并时需重排迁移号 + 出一条列齐全部 provider 的统一迁移。
+
 ## 2026-06-19 · 合并外部通知 + 设置页 + Telegram 回控（feat/notifications → main）🎉
 
 - 把 `feat/notifications`（邮件/企微/Telegram 三渠道出站 + 设置页自助绑定 + 事件→`notification_outbox`→渠道 adapter 可靠投递 + Telegram 双向回控 C1/C2）合入 main。分支基于很早的 `8a0ab40`，跨度大。
