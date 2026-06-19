@@ -2,6 +2,12 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 通知阶段收尾（暂告一段落）
+
+- 现状：外部通知三渠道（邮件 / 企业微信智能机器人 / Telegram）真机验证通过 + 设置页自助绑定；Telegram 双向回控 C1+C2 完成（聊天里建/选/评论/改状态/优先级/指派/搜索/切空间）。**满足当前需求，通知阶段暂停**。
+- **暂缓（按需再启）**：C3 富交互（按钮选择器 / 原地更新卡片 / 危险操作确认 / 回复绑定持久化）；企微接同一 router 做回控；N4 飞书；N5 移动端（RN/Expo）。C3/C2 的方案与能力清单已存 [notifications.md §十]。
+- 全部在分支 `feat/notifications`（worktree `~/code/zero-notifications`），main 未动；凭据仅在该 worktree `.env`（不入库）。**待定**：是否合并回 main。
+
 ## 2026-06-19 · C2 Telegram 命令全集
 
 - **共享动作层补全** `issue-actions.ts`：`createIssue`（建+created 事件+派发+通知）、`searchIssues`、`setIssuePriority`、`assignIssue`（member/agent，agent 非 backlog 则派发）、`listAgents`/`findAgentByName`、`listWorkspacesForUser`/`isWorkspaceMember`、`getUserName`；优先级常量/标签。
