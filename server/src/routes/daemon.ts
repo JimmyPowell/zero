@@ -2,11 +2,13 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { createMiddleware } from "hono/factory";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { hashToken } from "@/lib/token";
 import { assembleContext } from "@/lib/dispatch";
+import { incomingRunEventSchema } from "@/lib/run-events";
+import { publish } from "@/lib/run-bus";
 
 // daemon 用运行时令牌认证：Authorization: Bearer <token>
 type DaemonEnv = {
@@ -91,7 +93,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       .set({ status: "running", startedAt: new Date() })
       .where(and(eq(schema.task.id, cand.id), eq(schema.task.status, "queued")));
 
-    // 时间线：开始执行
+    // 时间线：开始执行（meta 带 taskId，前端据此把运行卡片连到执行日志）
     await db.insert(schema.issueEvent).values({
       id: crypto.randomUUID(),
       issueId: cand.issueId,
@@ -99,6 +101,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       actorType: "agent",
       actorId: cand.agentId,
       kind: "run_started",
+      meta: { taskId: cand.id },
     });
 
     const [ag] = await db
@@ -125,6 +128,57 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       context,
     });
   })
+  // 上报执行流：daemon adapter 规范化后的细粒度事件，批量写入 + 实时分发
+  .post(
+    "/tasks/:id/events",
+    zValidator(
+      "json",
+      z.object({ events: z.array(incomingRunEventSchema).min(1).max(200) }),
+    ),
+    async (c) => {
+      const rt = c.get("runtime");
+      const id = c.req.param("id");
+      const [tk] = await db
+        .select()
+        .from(schema.task)
+        .where(and(eq(schema.task.id, id), eq(schema.task.runtimeId, rt.id)))
+        .limit(1);
+      if (!tk) return c.json({ error: "任务不存在" }, 404);
+      const { events } = c.req.valid("json");
+
+      const rows = events.map((e) => ({
+        id: crypto.randomUUID(),
+        taskId: tk.id,
+        issueId: tk.issueId,
+        workspaceId: tk.workspaceId,
+        seq: e.seq,
+        type: e.type,
+        tool: e.tool ?? null,
+        toolName: e.toolName ?? null,
+        text: e.text != null ? e.text.slice(0, 8000) : null,
+        payload: e.payload ?? null,
+      }));
+
+      // 幂等：daemon 重发同 (task, seq) 不报错（保持已存）
+      await db
+        .insert(schema.runEvent)
+        .values(rows)
+        .onDuplicateKeyUpdate({ set: { seq: sql`seq` } });
+
+      // 实时分发给订阅中的 SSE 连接（精简负载，原始 payload 走 DB 回放）
+      for (const r of rows) {
+        publish(tk.id, {
+          id: r.id,
+          seq: r.seq,
+          type: r.type,
+          tool: r.tool,
+          toolName: r.toolName,
+          text: r.text,
+        });
+      }
+      return c.json({ ok: true, count: rows.length });
+    },
+  )
   // 完成：写最终评论 + run_finished，issue → 评审中
   .post(
     "/tasks/:id/complete",
@@ -161,6 +215,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         actorType: "agent",
         actorId: tk.agentId,
         kind: "run_finished",
+        meta: { taskId: tk.id },
       });
       await db
         .update(schema.task)
@@ -206,7 +261,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         actorId: tk.agentId,
         kind: "run_failed",
         body: error ?? null,
-        meta: error ? { error } : null,
+        meta: { taskId: tk.id, ...(error ? { error } : {}) },
       });
       await db
         .update(schema.task)

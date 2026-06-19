@@ -244,6 +244,50 @@ export const task = mysqlTable(
   ],
 );
 
+// 执行细粒度日志：一次 task 执行流中每一步规范化后的事件（可回放）。
+// 与 provider 无关 —— daemon 里各 provider 的 adapter 把原生流（stream-json 等）
+// 翻译成这套统一 schema 后写入；server / web 只认这套，不碰 provider 细节。
+export const runEvent = mysqlTable(
+  "run_event",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    taskId: char("task_id", { length: 36 })
+      .notNull()
+      .references(() => task.id, { onDelete: "cascade" }),
+    issueId: char("issue_id", { length: 36 })
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // 每个 task 内单调递增，排序 + SSE 断点续传（Last-Event-ID）的锚
+    seq: int("seq").notNull(),
+    // 规范化事件类型（与 provider 无关）
+    type: mysqlEnum("type", [
+      "run_status", // 生命周期/元信息：init、result
+      "assistant_text", // 模型可见文本
+      "thinking", // 模型思考 / 推理（若 provider 提供）
+      "tool_call", // 发起一次工具调用
+      "tool_result", // 工具返回
+      "usage", // token / 费用
+      "error", // 错误
+    ]).notNull(),
+    // 规范化工具类目（read|edit|write|exec|search|task|other），仅工具类事件有
+    tool: varchar("tool", { length: 32 }),
+    // 原始工具名（如 Bash / exec_command），保真用
+    toolName: varchar("tool_name", { length: 128 }),
+    text: text("text"), // 给人看的展示文本
+    payload: json("payload"), // 原始 provider 事件（全保真）
+    createdAt: timestamp("created_at", { fsp: 3 })
+      .notNull()
+      .default(sql`(now(3))`),
+  },
+  (t) => [
+    unique("uniq_run_event_task_seq").on(t.taskId, t.seq),
+    index("idx_run_event_task").on(t.taskId, t.seq),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
@@ -253,3 +297,4 @@ export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
 export type Runtime = typeof runtime.$inferSelect;
 export type Task = typeof task.$inferSelect;
+export type RunEvent = typeof runEvent.$inferSelect;

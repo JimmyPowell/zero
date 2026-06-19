@@ -57,6 +57,13 @@
       "when": 1781853445668,
       "tag": "0007_sharp_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1781855231924,
+      "tag": "0008_puzzling_lester",
+      "breakpoints": true
     }
   ]
 }
