@@ -9,6 +9,7 @@ import { PriorityPicker } from "@/components/issue/PriorityPicker";
 import { AssigneePicker } from "@/components/issue/AssigneePicker";
 import { RepoBinding } from "@/components/issue/RepoBinding";
 import { Timeline } from "@/components/issue/Timeline";
+import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import { issuesActions } from "@/lib/issues-store";
@@ -20,6 +21,7 @@ import {
   type IssueEvent,
   type Member,
   type Agent,
+  type RunSummary,
   type UpdateIssuePayload,
 } from "@/lib/api-client";
 
@@ -57,6 +59,8 @@ export function IssueDetailView() {
 
   const [issue, setIssue] = useState<IssueDetail | null>(null);
   const [events, setEvents] = useState<IssueEvent[]>([]);
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -72,15 +76,17 @@ export function IssueDetailView() {
     Promise.all([
       api.getIssue(wsId, id),
       api.listEvents(wsId, id),
+      api.listRuns(wsId, id).catch(() => ({ runs: [] as RunSummary[] })),
       api.listMembers(wsId).catch(() => ({ members: [] as Member[] })),
       api.listAgents(wsId).catch(() => ({ agents: [] as Agent[] })),
     ])
-      .then(([d, e, m, a]) => {
+      .then(([d, e, r, m, a]) => {
         if (!alive) return;
         setIssue(d.issue);
         setEditTitle(d.issue.title);
         setEditDesc(d.issue.description ?? "");
         setEvents(e.events);
+        setRuns(r.runs);
         setMembers(m.members);
         setAgents(a.agents);
         setStatus("ready");
@@ -90,6 +96,32 @@ export function IssueDetailView() {
       alive = false;
     };
   }, [wsId, id]);
+
+  // 刷新时间线 + 运行摘要
+  async function refresh() {
+    if (!wsId || !id) return;
+    try {
+      const [e, r] = await Promise.all([
+        api.listEvents(wsId, id),
+        api.listRuns(wsId, id),
+      ]);
+      setEvents(e.events);
+      setRuns(r.runs);
+    } catch {
+      /* 忽略瞬时错误，下个轮询周期再试 */
+    }
+  }
+
+  // 有运行处于活动态时轮询，让时间线/运行卡片实时跟进（细粒度走浮层 SSE）
+  const hasActiveRun = runs.some(
+    (r) => r.status === "queued" || r.status === "running",
+  );
+  useEffect(() => {
+    if (!wsId || !id || !hasActiveRun) return;
+    const iv = setInterval(() => void refresh(), 3000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsId, id, hasActiveRun]);
 
   async function patch(payload: UpdateIssuePayload) {
     if (!wsId || !issue) return;
@@ -115,6 +147,8 @@ export function IssueDetailView() {
       const { event } = await api.addComment(wsId, issue.id, body);
       setEvents((prev) => [...prev, event]);
       setComment("");
+      // 评论可能触发了 agent 执行 → 拉取最新运行卡片（并启动轮询）
+      await refresh();
     } finally {
       setPosting(false);
     }
@@ -150,7 +184,11 @@ export function IssueDetailView() {
     );
   }
 
+  const runsById = Object.fromEntries(runs.map((r) => [r.taskId, r]));
+  const openRun = openRunId ? runsById[openRunId] : null;
+
   return (
+    <>
     <Panel className="overflow-hidden p-0">
       <div className="flex h-full">
         {/* 主区：标题 / 描述 / 时间线 / 评论 —— 仅此处随内容滚动 */}
@@ -201,7 +239,11 @@ export function IssueDetailView() {
             <div className="my-5 h-px bg-border" />
 
             <SectionLabel>{t("detail.activity")}</SectionLabel>
-            <Timeline events={events} />
+            <Timeline
+              events={events}
+              runs={runsById}
+              onOpenRun={(taskId) => setOpenRunId(taskId)}
+            />
 
             {/* 评论输入 */}
             <div className="mt-4">
@@ -294,5 +336,15 @@ export function IssueDetailView() {
         </aside>
       </div>
     </Panel>
+    {openRun && wsId && (
+      <RunLogOverlay
+        workspaceId={wsId}
+        issueId={issue.id}
+        run={openRun}
+        onClose={() => setOpenRunId(null)}
+        onFinished={() => void refresh()}
+      />
+    )}
+    </>
   );
 }

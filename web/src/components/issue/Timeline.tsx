@@ -1,20 +1,111 @@
+import { ChevronRight } from "lucide-react";
+
 import { ActorAvatar } from "@/components/ActorAvatar";
 import { Markdown } from "@/components/Markdown";
 import { useUi } from "@/lib/ui-store";
 import { relativeTime } from "@/lib/time";
 import { statusMeta, priorityMeta } from "@/lib/issue-meta";
+import { cn } from "@/lib/utils";
 import type {
   IssueEvent,
   IssueStatus,
   IssuePriority,
   AssigneeRef,
+  RunStatus,
+  RunSummary,
 } from "@/lib/api-client";
 
 function interp(s: string, vars: Record<string, string>): string {
   return s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
 }
 
-export function Timeline({ events }: { events: IssueEvent[] }) {
+const RUN_PILL: Record<RunStatus, { cls: string; dot: string }> = {
+  queued: { cls: "text-muted-foreground", dot: "bg-muted-foreground/50" },
+  running: { cls: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500 animate-pulse" },
+  succeeded: { cls: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  failed: { cls: "text-red-600 dark:text-red-400", dot: "bg-red-500" },
+  cancelled: { cls: "text-muted-foreground", dot: "bg-muted-foreground/50" },
+};
+
+function runDuration(run: RunSummary): string | null {
+  if (run.startedAt && run.finishedAt) {
+    const ms =
+      new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+    if (ms >= 0) return `${Math.round(ms / 100) / 10}s`;
+  }
+  return null;
+}
+
+// 时间线里的「运行卡片」：状态 + 统计 + 打开执行日志
+function RunCard({
+  actorName,
+  actorAvatar,
+  run,
+  time,
+  onOpen,
+}: {
+  actorName: string;
+  actorAvatar?: string | null;
+  run: RunSummary;
+  time: string;
+  onOpen: () => void;
+}) {
+  const { t } = useUi();
+  const pill = RUN_PILL[run.status];
+  const dur = runDuration(run);
+  return (
+    <li className="flex gap-3 py-2.5">
+      <ActorAvatar
+        type="agent"
+        name={actorName}
+        url={actorAvatar}
+        className="mt-0.5 size-7"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-medium text-foreground">
+            {actorName}
+          </span>
+          <span className="text-xs text-muted-foreground">{time}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="mt-1.5 flex w-full items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-2.5 text-left transition-colors hover:border-active-fg/40 hover:bg-sidebar-accent"
+        >
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 text-xs font-medium",
+              pill.cls,
+            )}
+          >
+            <span className={cn("size-1.5 rounded-full", pill.dot)} />
+            {t(`run.status.${run.status}`)}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {run.toolCallCount} {t("runlog.toolCalls")} · {run.eventCount}{" "}
+            {t("runlog.events")}
+            {dur ? ` · ${dur}` : ""}
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-active-fg">
+            {t("runlog.viewLog")}
+            <ChevronRight className="size-3.5" />
+          </span>
+        </button>
+      </div>
+    </li>
+  );
+}
+
+export function Timeline({
+  events,
+  runs = {},
+  onOpenRun,
+}: {
+  events: IssueEvent[];
+  runs?: Record<string, RunSummary>;
+  onOpenRun?: (taskId: string) => void;
+}) {
   const { t, locale } = useUi();
 
   const statusLabel = (v?: string | null) =>
@@ -27,6 +118,11 @@ export function Timeline({ events }: { events: IssueEvent[] }) {
       {events.map((ev) => {
         const actorName = ev.actor?.name ?? t("timeline.system");
         const time = relativeTime(ev.createdAt, locale);
+        const meta = ev.meta as {
+          taskId?: string;
+          reason?: string;
+          error?: string;
+        } | null;
 
         // 评论：卡片
         if (ev.kind === "comment") {
@@ -53,6 +149,28 @@ export function Timeline({ events }: { events: IssueEvent[] }) {
           );
         }
 
+        // run_started：有对应 run 摘要 → 运行卡片（状态 + 统计 + 打开日志）
+        if (ev.kind === "run_started" && meta?.taskId && runs[meta.taskId]) {
+          return (
+            <RunCard
+              key={ev.id}
+              actorName={actorName}
+              actorAvatar={ev.actor?.avatarUrl}
+              run={runs[meta.taskId]}
+              time={time}
+              onOpen={() => onOpenRun?.(meta.taskId!)}
+            />
+          );
+        }
+        // run_finished/run_failed 已被运行卡片覆盖最终状态 → 不重复展示
+        // （no_runtime 这类无 taskId 的失败仍走下方活动行）
+        if (
+          (ev.kind === "run_finished" || ev.kind === "run_failed") &&
+          meta?.taskId
+        ) {
+          return null;
+        }
+
         // 变更：活动行
         let text = "";
         if (ev.kind === "created") {
@@ -77,13 +195,12 @@ export function Timeline({ events }: { events: IssueEvent[] }) {
         } else if (ev.kind === "run_finished") {
           text = t("timeline.runFinished");
         } else if (ev.kind === "run_failed") {
-          const m = ev.meta as { reason?: string; error?: string } | null;
           text =
-            m?.reason === "no_runtime"
+            meta?.reason === "no_runtime"
               ? t("timeline.noRuntime")
               : t("timeline.runFailed") + (ev.body ? `：${ev.body}` : "");
         } else {
-          text = ev.kind; // 其余 run_* 占位（B3.3）
+          text = ev.kind;
         }
 
         return (
