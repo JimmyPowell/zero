@@ -2,6 +2,18 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 修复 daemon 吞错 + 诊断「模型无效」
+
+- 现象：指派 issue 给 agent 后「执行失败：claude exited 1」。**根因**：agent 的「模型」字段被填成无效值 `111`，daemon 传 `--model 111` 被 claude 拒绝（model 不存在）。
+- **daemon bug**：`claude --output-format json` 出错时把真实错误写在 stdout，旧代码只读 stderr → 笼统显示 "claude exited 1"。已修：失败时解析 stdout 末行 JSON 的 `result`/`is_error`，把**真实错误**回传时间线。
+- 清掉无效模型后重跑**成功**（agent 正常回复）。模型字段留空即用默认（Opus 4.8）。
+- **待办**：任务失败后无「重跑」入口——改 agent 配置不会自动重试，需新触发（如评论）。计划加重跑按钮。
+
+## 2026-06-19 · 修复搜索面板聚焦
+
+- 搜索命令面板（`SearchCommand`）打开时输入框不自动聚焦：面板是自定义 `<div>` 蒙层（非 Radix Dialog），无人把焦点放进 cmdk 的 `<input>`，导致键入不进搜索框、`onValueChange` 不触发。
+- 修复：`CommandInput` 透传 `ref`（React 19 ref-as-prop）；`SearchCommand` 在 `open` 后用 `requestAnimationFrame` 聚焦输入框。`tsc --noEmit` 通过。
+
 ## 2026-06-19 · B3.2 daemon 执行完成 —— 真实跑通 claude 🎉
 
 - daemon 加**认领循环（5s）+ 串行执行**：claim → `buildPrompt`（agent 指令 + issue 标题/描述 + 最近评论 + 仓库）→ `claude -p --output-format json --dangerously-skip-permissions [--model] [--resume]` → complete/fail 回传。先支持 `claude_code` provider；工作目录 `~/.zero/work/<taskId>`（worktree 留 B3.3）。

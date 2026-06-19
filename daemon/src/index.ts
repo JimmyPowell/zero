@@ -171,15 +171,34 @@ async function runClaude(
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  if (code !== 0) {
-    return { ok: false, error: (stderr || `claude exited ${code}`).slice(0, 800) };
-  }
+
+  // claude --output-format json 即使出错也常把结构化结果写在 stdout（最后一行）
+  let parsed:
+    | { result?: string; session_id?: string; is_error?: boolean; subtype?: string }
+    | null = null;
   try {
-    const j = JSON.parse(stdout) as { result?: string; session_id?: string };
-    return { ok: true, result: j.result ?? "", sessionId: j.session_id };
+    const last = stdout.trim().split("\n").filter(Boolean).pop() ?? "";
+    parsed = JSON.parse(last);
   } catch {
-    return { ok: true, result: stdout.slice(0, 4000) };
+    /* 非 JSON 输出 */
   }
+
+  if (code !== 0 || parsed?.is_error) {
+    const detail =
+      (parsed?.result && parsed.result.trim()) ||
+      stderr.trim() ||
+      stdout.trim().slice(0, 800) ||
+      `claude exited ${code}`;
+    console.error(
+      `claude 失败 (exit ${code}): ${detail.slice(0, 400)}`,
+    );
+    return { ok: false, error: String(detail).slice(0, 800) };
+  }
+  return {
+    ok: true,
+    result: parsed?.result ?? stdout.slice(0, 4000),
+    sessionId: parsed?.session_id,
+  };
 }
 
 let busy = false;
