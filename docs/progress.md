@@ -2,6 +2,18 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 运行时管理升级（分支 feat/runtime-management，待合并）
+
+在独立 worktree/分支开发，**未合并**（由用户合并）。把原先「只能增删」的运行时管理补成完整能力：
+
+- **数据模型（迁移 0010，向后兼容、含回填）**：`runtime` 加 `owner_id`(账号级归属)、`visibility`(private|workspace)、`max_concurrency`(默认1)；新表 `runtime_workspace`(触达范围，支持跨工作空间上架)；新表 `task_usage`(每任务 token + **Claude 权威 `total_cost_usd`**)。回填：现有运行时补 reach 行 + owner，避免改用 reach 查询后从列表消失。
+- **作用域 / 可见性（两个正交轴）**：① 谁能用 = 私有(仅 owner) / 共享(工作空间全员)；② 在哪些工作空间 = 当前 / 选定多个 / 全部（`runtime_workspace`）。覆盖 4 种场景（自己用 / 工作空间共享 / 跨工作空间共享 / 多空间但仅自己）。列表过滤 = reach∩(共享|自己)；绑 agent、删除、改 reach 都按归属/角色鉴权（owner 整体删，工作空间管理员仅本空间下架）。比 Multica「每个工作空间各注册一份」更省（账号归属，一处上架多处用）。
+- **运行时级并发**：daemon 由 `busy` 串行 → 并发池 `pump`（填槽至 `maxConcurrency`）；服务端 hello/heartbeat 下发上限（Web 改完即时生效），claim 加上限守卫 + 条件 UPDATE 抢占（防并行重复领取）。
+- **成本管理**：daemon 从 claude `result` 事件采集 model/cost/token（重跑累计）→ `complete` 落 `task_usage` → 运行时详情页按总览 / 按天 / 按 agent 展示。**直接用 Claude 的权威成本**，不维护易过期的硬编码定价表（差异化于 Multica）。
+- **前端**：运行时 CRUD 补齐 —— 列表行可点进**详情页**（基本信息 / 触达范围 / 绑定 agent / 用量成本）+ **编辑弹窗**（私有·共享分段 + 并发步进 + 触达范围多选）；列表加可见性/并发/绑定数徽标。i18n zh/en 补齐。
+- **实测**：server+daemon+web `tsc`/build 全过；独立端口跑后端 + 模拟 daemon 全链路 e2e **28/28 通过**（创建带跨工作空间 reach、私有可见性、并发上限 claim 守卫、usage 落库与按天/按 agent 聚合、改 reach 下架、owner 删除）。
+- **下一批（本轮未做）**：模型发现下拉（daemon 上报各 CLI 可用模型，根治填错模型）、daemon 上报增强（设备名/版本）、健康态细化（online/recently_lost/offline）。
+
 ## 2026-06-19 · 合并实时执行日志（feat/agent-exec-stream → main）🎉
 
 - **功能**：执行过程**实时流式**进时间线浮层 —— provider 无关的 `RunEvent` 协议；daemon `claude-adapter` 解析 `claude -p --output-format stream-json --verbose`，`reporter` 批量按单调 `seq` 上报；server `run_event` 表（`unique(task,seq)` 幂等）+ `run-bus` + SSE 流端点；前端 `RunLogOverlay`（磨砂浮层）+ 详情页运行卡片 / 活动态 3s 轮询。
