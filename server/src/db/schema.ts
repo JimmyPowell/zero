@@ -6,6 +6,7 @@ import {
   text,
   int,
   json,
+  decimal,
   timestamp,
   mysqlEnum,
   unique,
@@ -187,7 +188,10 @@ export const agent = mysqlTable(
   ],
 );
 
-// 运行时：执行 agent 的地方（本地 daemon / 云端）。daemon 用 token 配对上来
+// 运行时：执行 agent 的地方（本地 daemon / 云端）。daemon 用 token 配对上来。
+// 归属一个账号(ownerId)；workspaceId = 配对时所在的「主」工作空间（来源记录）。
+// 实际「在哪些工作空间可用」由 runtime_workspace 决定（触达范围）；
+// 「谁能用」由 visibility 决定（private=仅 owner / workspace=触达空间内全员）。
 export const runtime = mysqlTable(
   "runtime",
   {
@@ -195,8 +199,18 @@ export const runtime = mysqlTable(
     workspaceId: char("workspace_id", { length: 36 })
       .notNull()
       .references(() => workspace.id, { onDelete: "cascade" }),
+    // 添加者（账号级归属）。可空：兼容历史行 / 旧版服务端创建（迁移回填）
+    ownerId: char("owner_id", { length: 36 }).references(() => user.id, {
+      onDelete: "set null",
+    }),
     name: varchar("name", { length: 255 }).notNull(),
     kind: mysqlEnum("kind", ["local", "cloud"]).notNull().default("local"),
+    // 可见性：private=仅 owner 可见/可用；workspace=触达到的工作空间内全员可用
+    visibility: mysqlEnum("visibility", ["private", "workspace"])
+      .notNull()
+      .default("workspace"),
+    // 运行时级并发上限：daemon 同时最多并行的任务数（1=串行）
+    maxConcurrency: int("max_concurrency").notNull().default(1),
     tokenHash: varchar("token_hash", { length: 64 }).notNull(), // sha256(token)
     // 发现到的 CLI 能力，如 {claude_code:true, codex:false, opencode:false}
     capabilities: json("capabilities"),
@@ -206,7 +220,27 @@ export const runtime = mysqlTable(
   },
   (t) => [
     index("idx_runtime_workspace").on(t.workspaceId),
+    index("idx_runtime_owner").on(t.ownerId),
     index("idx_runtime_token").on(t.tokenHash),
+  ],
+);
+
+// 运行时触达范围：运行时「上架」到哪些工作空间（多对多）。
+// owner 可把同一台运行时上架到自己加入的多个工作空间（跨工作空间共享）。
+export const runtimeWorkspace = mysqlTable(
+  "runtime_workspace",
+  {
+    runtimeId: char("runtime_id", { length: 36 })
+      .notNull()
+      .references(() => runtime.id, { onDelete: "cascade" }),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("uniq_runtime_workspace").on(t.runtimeId, t.workspaceId),
+    index("idx_runtime_workspace_ws").on(t.workspaceId),
   ],
 );
 
@@ -292,6 +326,38 @@ export const runEvent = mysqlTable(
   ],
 );
 
+// 任务用量/成本：一次 task 执行的 token / 成本（取自 Claude result 事件的权威值）。
+// 一个 task 一行（daemon 完成时上报，含会话重跑累计）。用于运行时 / agent / 按天聚合。
+// 反范式带上 workspaceId / runtimeId / agentId，便于无 join 聚合。
+export const taskUsage = mysqlTable(
+  "task_usage",
+  {
+    taskId: char("task_id", { length: 36 })
+      .primaryKey()
+      .references(() => task.id, { onDelete: "cascade" }),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    runtimeId: char("runtime_id", { length: 36 }),
+    agentId: char("agent_id", { length: 36 }),
+    model: varchar("model", { length: 128 }),
+    // Claude 给的权威成本（total_cost_usd）——比维护硬编码定价表更准
+    costUsd: decimal("cost_usd", { precision: 12, scale: 6 }),
+    inputTokens: int("input_tokens").notNull().default(0),
+    outputTokens: int("output_tokens").notNull().default(0),
+    cacheReadTokens: int("cache_read_tokens").notNull().default(0),
+    cacheWriteTokens: int("cache_write_tokens").notNull().default(0),
+    durationMs: int("duration_ms"),
+    numTurns: int("num_turns"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_task_usage_runtime").on(t.runtimeId, t.createdAt),
+    index("idx_task_usage_agent").on(t.agentId),
+    index("idx_task_usage_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
@@ -300,5 +366,7 @@ export type Repo = typeof repo.$inferSelect;
 export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
 export type Runtime = typeof runtime.$inferSelect;
+export type RuntimeWorkspace = typeof runtimeWorkspace.$inferSelect;
 export type Task = typeof task.$inferSelect;
 export type RunEvent = typeof runEvent.$inferSelect;
+export type TaskUsage = typeof taskUsage.$inferSelect;
