@@ -2,6 +2,19 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · B3.1 派发骨架完成（服务端环路）
+
+**后端**（迁移 0005）
+- `task` 表：issue×agent 的派发单元（queued/running/succeeded/failed/cancelled），含 runtime_id / session_id / work_dir / trigger_event_id。
+- `lib/dispatch.ts`：`enqueueTaskForIssue`（指派 agent + 非 backlog 才入队；未绑运行时记系统事件；同 issue×agent 去重；**复用上次 session_id**）+ `assembleContext`（issue + 最近 20 评论 + 仓库）。
+- 触发点：issue 创建/指派 agent/移出 backlog、人在 agent-assigned issue 下评论。
+- daemon 接口：`/daemon/tasks/claim`（取本 runtime 排队任务 → running + run_started + 返回装配好的上下文）、`/complete`（写 agent 评论 + run_finished + issue→in_review + 存 session）、`/fail`（run_failed）。
+- **实测**（curl 模拟 daemon）：自动入队 → 认领带完整上下文 → 完成 → issue 变 in_review → 评论再触发新任务且复用 session。
+
+**前端**：时间线渲染 `run_started/run_finished/run_failed`（含「未绑定运行时」提示）。
+
+**下一步 B3.2**：daemon 认领循环 + 真实跑 `claude -p` + worktree 执行 + 流式日志。
+
 ## 2026-06-19 · B2b daemon（本地运行时）完成 —— B2 全跑通
 
 - `daemon/`（Bun/TS）：发现本地 `claude`/`codex`/`opencode` → 用配对令牌 `POST /daemon/hello` 连上 → 每 20s 心跳；可 `bun build --compile` 出单文件。

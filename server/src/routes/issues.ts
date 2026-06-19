@@ -10,6 +10,7 @@ import {
   type WorkspaceEnv,
 } from "@/middleware/workspace";
 import { getMembership } from "@/lib/access";
+import { enqueueTaskForIssue } from "@/lib/dispatch";
 
 const statusEnum = z.enum([
   "backlog",
@@ -271,6 +272,9 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       });
     });
 
+    // 指派给 agent 且非 backlog → 派发执行
+    await enqueueTaskForIssue(id);
+
     const [created] = await baseIssueQuery()
       .where(eq(schema.issue.id, id))
       .limit(1);
@@ -375,6 +379,30 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       }
     }
 
+    // 判断是否应派发：指派给 agent 或移出 backlog（且最终是 agent + 非 backlog）
+    const finalStatus = (updates.status as string | undefined) ?? current.status;
+    const finalAssigneeType =
+      updates.assigneeType !== undefined
+        ? (updates.assigneeType as string | null)
+        : current.assigneeType;
+    const finalAssigneeId =
+      updates.assigneeId !== undefined
+        ? (updates.assigneeId as string | null)
+        : current.assigneeId;
+    const assignedToAgent =
+      patch.assigneeId !== undefined &&
+      finalAssigneeType === "agent" &&
+      !!finalAssigneeId;
+    const movedOutOfBacklog =
+      patch.status !== undefined &&
+      current.status === "backlog" &&
+      finalStatus !== "backlog";
+    const shouldEnqueue =
+      finalAssigneeType === "agent" &&
+      !!finalAssigneeId &&
+      finalStatus !== "backlog" &&
+      (assignedToAgent || movedOutOfBacklog);
+
     await db.transaction(async (tx) => {
       if (Object.keys(updates).length > 0) {
         await tx
@@ -386,6 +414,8 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         await tx.insert(schema.issueEvent).values(events);
       }
     });
+
+    if (shouldEnqueue) await enqueueTaskForIssue(id);
 
     const [row] = await baseIssueQuery()
       .where(eq(schema.issue.id, id))
@@ -482,6 +512,9 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       kind: "comment",
       body,
     });
+
+    // 人在 agent-assigned issue 下评论 → 触发该 agent 继续执行
+    await enqueueTaskForIssue(id, eventId);
 
     const me = await memberLabel(sub);
     return c.json(

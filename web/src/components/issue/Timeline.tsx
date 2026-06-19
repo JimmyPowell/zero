@@ -71,8 +71,18 @@ export function Timeline({ events }: { events: IssueEvent[] }) {
           text = to
             ? interp(t("timeline.assigned"), { name: to.name ?? "" })
             : t("timeline.unassigned");
+        } else if (ev.kind === "run_started") {
+          text = t("timeline.runStarted");
+        } else if (ev.kind === "run_finished") {
+          text = t("timeline.runFinished");
+        } else if (ev.kind === "run_failed") {
+          const m = ev.meta as { reason?: string; error?: string } | null;
+          text =
+            m?.reason === "no_runtime"
+              ? t("timeline.noRuntime")
+              : t("timeline.runFailed") + (ev.body ? `：${ev.body}` : "");
         } else {
-          text = ev.kind; // Phase B 的 run_* 事件占位
+          text = ev.kind; // 其余 run_* 占位（B3.3）
         }
 
         return (

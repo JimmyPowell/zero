@@ -202,6 +202,44 @@ export const runtime = mysqlTable(
   ],
 );
 
+// 任务：一次 agent 执行的派发单元（issue × agent）
+export const task = mysqlTable(
+  "task",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    issueId: char("issue_id", { length: 36 })
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    agentId: char("agent_id", { length: 36 })
+      .notNull()
+      .references(() => agent.id, { onDelete: "cascade" }),
+    runtimeId: char("runtime_id", { length: 36 }), // 入队时取自 agent.runtimeId
+    status: mysqlEnum("status", [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled",
+    ])
+      .notNull()
+      .default("queued"),
+    triggerEventId: char("trigger_event_id", { length: 36 }), // 触发的评论事件
+    sessionId: text("session_id"), // agent CLI 会话（按 agent×issue 复用）
+    workDir: text("work_dir"), // worktree 路径（B3.2）
+    error: text("error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    startedAt: timestamp("started_at"),
+    finishedAt: timestamp("finished_at"),
+  },
+  (t) => [
+    index("idx_task_claim").on(t.runtimeId, t.status),
+    index("idx_task_issue").on(t.issueId),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
@@ -210,3 +248,4 @@ export type Repo = typeof repo.$inferSelect;
 export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
 export type Runtime = typeof runtime.$inferSelect;
+export type Task = typeof task.$inferSelect;
