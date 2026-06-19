@@ -641,7 +641,9 @@ async function runOpenCode(
       const t = (o.part.tokens ?? {}) as Record<string, any>;
       hasUsage = true;
       usage.inputTokens += num(t.input) ?? 0;
-      usage.outputTokens += num(t.output) ?? 0;
+      // reasoning（推理 token）也是生成出来的、按 output 计费 → 并入 output，
+      // 使 input+output+cache 与 opencode 报的 total 对齐（否则漏掉 reasoning）。
+      usage.outputTokens += (num(t.output) ?? 0) + (num(t.reasoning) ?? 0);
       usage.cacheReadTokens += num(t.cache?.read) ?? 0;
       usage.cacheWriteTokens += num(t.cache?.write) ?? 0;
       usage.costUsd = (usage.costUsd ?? 0) + (num(o.part.cost) ?? 0);
