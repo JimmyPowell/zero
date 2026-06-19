@@ -77,6 +77,7 @@ function discover(): Record<string, boolean> {
     claude_code: Bun.which("claude") != null,
     codex: Bun.which("codex") != null,
     opencode: Bun.which("opencode") != null,
+    codebuddy: Bun.which("codebuddy") != null,
   };
 }
 
@@ -463,9 +464,11 @@ export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
   return L.join("\n");
 }
 
-// 跑 Claude Code（无头，流式）：逐行解析 stream-json，经 adapter 规范化后
-// 通过 reporter 实时上报执行流；返回最终文本 + 会话 id（供 complete 回传）。
-async function runClaude(
+// 跑 Claude 系无头 CLI（claude / codebuddy —— stream-json 同构，复用同一逻辑+adapter）：
+// 逐行解析 stream-json，经 adapter 规范化后通过 reporter 实时上报执行流；
+// 返回最终文本 + 会话 id（供 complete 回传）。bin 决定调哪个二进制。
+async function runClaudeLike(
+  bin: string,
   prompt: string,
   cwd: string,
   opts: { model?: string | null; sessionId?: string | null; mcpConfig?: string },
@@ -478,7 +481,7 @@ async function runClaude(
   usage?: RunUsage | null;
 }> {
   const cmd = [
-    "claude",
+    bin,
     "-p",
     "--output-format",
     "stream-json",
@@ -561,8 +564,8 @@ async function runClaude(
 
   if (code !== 0 || isError) {
     const detail =
-      (result && result.trim()) || stderr.trim() || `claude exited ${code}`;
-    console.error(`claude 失败 (exit ${code}): ${detail.slice(0, 400)}`);
+      (result && result.trim()) || stderr.trim() || `${bin} exited ${code}`;
+    console.error(`${bin} 失败 (exit ${code}): ${detail.slice(0, 400)}`);
     return {
       ok: false,
       result,
@@ -783,6 +786,12 @@ async function runOpenCode(
   return { ok: true, result: result.trim(), sessionId, usage: finalUsage };
 }
 
+// Claude 系两个 CLI 共用 runClaudeLike，只换二进制名
+const runClaude: Runner = (prompt, cwd, opts, reporter) =>
+  runClaudeLike("claude", prompt, cwd, opts, reporter);
+const runCodebuddy: Runner = (prompt, cwd, opts, reporter) =>
+  runClaudeLike("codebuddy", prompt, cwd, opts, reporter);
+
 // provider → runner + 续接失败特征（用于回退新会话）+ 是否注入 MCP 上下文
 const PROVIDERS: Record<
   string,
@@ -802,6 +811,13 @@ const PROVIDERS: Record<
     runner: runOpenCode,
     sessionInvalid: /session|not found/i,
     mcp: false,
+  },
+  // CodeBuddy（腾讯）是 Claude Code 衍生版：stream-json / 续接 / MCP 全同构，
+  // 直接复用 claudeAdapter 与 runClaudeLike。网关在 www.codebuddy.ai，无需代理。
+  codebuddy: {
+    runner: runCodebuddy,
+    sessionInvalid: /no conversation found|session id/i,
+    mcp: true,
   },
 };
 
@@ -849,7 +865,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     const spec = PROVIDERS[provider];
     if (!spec) {
       await post(server, token, `/daemon/tasks/${taskId}/fail`, {
-        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode）`,
+        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode / codebuddy）`,
       });
       return;
     }

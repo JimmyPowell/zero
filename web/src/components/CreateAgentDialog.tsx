@@ -22,11 +22,35 @@ import {
   type Runtime,
 } from "@/lib/api-client";
 
-const PROVIDERS: AgentProvider[] = ["claude_code", "codex", "opencode"];
+const PROVIDERS: AgentProvider[] = [
+  "claude_code",
+  "codex",
+  "opencode",
+  "codebuddy",
+];
 export const providerLabel: Record<AgentProvider, string> = {
   claude_code: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+  codebuddy: "CodeBuddy",
+};
+
+// 各 provider 常用模型建议（低成本优先）；点选即填入。模型框仍可自由输入。
+const modelSuggestions: Record<AgentProvider, string[]> = {
+  claude_code: ["haiku", "sonnet", "opus"],
+  codex: [], // codex 模型 id 依本机 codex 版本而定，不给可能失效的建议
+  opencode: ["opencode/deepseek-v4-flash-free"],
+  // CodeBuddy（腾讯网关）支持模型，低成本在前
+  codebuddy: [
+    "gemini-3.1-flash-lite",
+    "gemini-3.0-flash",
+    "gemini-2.5-flash",
+    "deepseek-v3-2-volc",
+    "kimi-k2.5",
+    "glm-5.0",
+    "gemini-3.1-pro",
+    "gpt-5.5",
+  ],
 };
 
 export function CreateAgentDialog({
@@ -240,6 +264,25 @@ export function CreateAgentDialog({
               value={model}
               onChange={(e) => setModel(e.target.value)}
             />
+            {modelSuggestions[provider].length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {modelSuggestions[provider].map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setModel(m)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                      model === m
+                        ? "border-primary/40 bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted/60",
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            )}
           </label>
 
           {/* 系统指令 */}

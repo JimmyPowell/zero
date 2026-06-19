@@ -99,6 +99,13 @@
       "when": 1781879384893,
       "tag": "0013_agent_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1781879807506,
+      "tag": "0014_agent_provider_codebuddy",
+      "breakpoints": true
     }
   ]
 }
