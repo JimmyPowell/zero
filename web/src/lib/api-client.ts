@@ -309,6 +309,8 @@ export interface RuntimeUsageSummary {
   days: number;
   runs: number;
   costUsd: number;
+  // 无金额数据的运行数（cost 为空，如 codex 走 ChatGPT 订阅，无单价）
+  noCostRuns: number;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;

@@ -248,6 +248,8 @@ const messages: Record<Locale, Record<string, string>> = {
     "runtime.byDay": "按天",
     "runtime.byAgent": "按智能体",
     "runtime.noUsage": "近 30 天本工作空间还没有用量。",
+    "runtime.noCostHint":
+      "其中 {n} 次为订阅计费·无金额数据（如 Codex 走 ChatGPT 订阅，已排除在成本外）",
     "runtime.detachConfirm": "从当前工作空间下架该运行时？本空间内绑定它的智能体会被解绑（不影响其它工作空间）。",
     "runtime.deleteOwnConfirm": "删除该运行时？所有工作空间内绑定它的智能体都会被解绑，用量记录一并删除。",
     "runtime.kind": "类型",
@@ -486,6 +488,8 @@ const messages: Record<Locale, Record<string, string>> = {
     "runtime.byDay": "By day",
     "runtime.byAgent": "By agent",
     "runtime.noUsage": "No usage in this workspace in the last 30 days.",
+    "runtime.noCostHint":
+      "{n} run(s) have no price data (e.g. Codex via ChatGPT subscription — excluded from cost)",
     "runtime.detachConfirm": "Remove this runtime from the current workspace? Agents bound to it here will be unbound (other workspaces unaffected).",
     "runtime.deleteOwnConfirm": "Delete this runtime? Agents bound to it in all workspaces will be unbound and usage records removed.",
     "runtime.kind": "Kind",

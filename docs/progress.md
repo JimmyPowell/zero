@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 成本来源说明 + codex「无金额」标注 + 单价表待办
+
+- **三家成本来源**：claude=`total_cost_usd`（权威）、opencode=`step_finish.part.cost`（权威，逐 step 累加）—— 都是 provider 自报的真实金额；**codex 走 ChatGPT 订阅，CLI 只给 token、不给单价/金额** → `cost_usd` 留 `null`（不是 0，是"金额未知"）。
+- **opencode token 修正**：把 `reasoning` token 并入 output（`input+output+cache==total`，之前漏了 reasoning）。
+- **codex 无金额标注**：运行时用量汇总加 `noCostRuns`（`cost_usd IS NULL` 计数）；详情页成本下方提示"其中 N 次为订阅计费·无金额数据（已排除在成本外）"，避免把空/0 误读成免费。
+- **⏳ 待办（单价表，先不做）**：codex 这类"只有 token、无金额"的，将来可**自维护一张单价表**（按 model 的 input/output 单价）来估算成本，价表**可能从 [LiteLLM](https://github.com/BerriAI/litellm) 的 `model_prices` 或同类平台拉取**（避免手填易过期）。现在先不做，标记待办。
+
 ## 2026-06-19 · 合并执行日志详情化 + Codex/OpenCode 接入（feat/run-log-detail → main）🎉
 
 - 把 `feat/run-log-detail`（Phase 1 日志详情化 + Phase 2 Codex/OpenCode 接入）合入 main。分支基于 `ec75ff0`（已含我方 §3.1 MCP / §3.2 增量 / 运行时管理），在其上做 provider 分发 + 详情化，**完整保留** `mcpConfig`/`buildPrompt(full)`/`usage`（且 MCP 按 provider 门控：`spec.mcp ? writeMcpConfig : undefined`，只 claude 注入）。

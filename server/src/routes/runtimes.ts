@@ -218,6 +218,8 @@ export const runtimeRoutes = new Hono<WorkspaceEnv>()
       .select({
         runs: sql<number>`COUNT(*)`,
         costUsd: sql<string>`COALESCE(SUM(${schema.taskUsage.costUsd}),0)`,
+        // 无单价数据的运行（cost_usd 为空，如 codex 走订阅）→ 金额不计入，单独计数提示
+        noCostRuns: sql<number>`SUM(CASE WHEN ${schema.taskUsage.costUsd} IS NULL THEN 1 ELSE 0 END)`,
         inputTokens: sql<number>`COALESCE(SUM(${schema.taskUsage.inputTokens}),0)`,
         outputTokens: sql<number>`COALESCE(SUM(${schema.taskUsage.outputTokens}),0)`,
         cacheReadTokens: sql<number>`COALESCE(SUM(${schema.taskUsage.cacheReadTokens}),0)`,
@@ -244,6 +246,7 @@ export const runtimeRoutes = new Hono<WorkspaceEnv>()
         days: 30,
         runs: n(tot?.runs),
         costUsd: n(tot?.costUsd),
+        noCostRuns: n(tot?.noCostRuns),
         inputTokens: n(tot?.inputTokens),
         outputTokens: n(tot?.outputTokens),
         cacheReadTokens: n(tot?.cacheReadTokens),

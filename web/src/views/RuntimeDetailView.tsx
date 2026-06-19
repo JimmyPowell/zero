@@ -269,6 +269,15 @@ export function RuntimeDetailView() {
             />
           </div>
 
+          {detail.usage.noCostRuns > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t("runtime.noCostHint").replace(
+                "{n}",
+                String(detail.usage.noCostRuns),
+              )}
+            </p>
+          )}
+
           {detail.usage.runs === 0 ? (
             <p className="mt-3 rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
               {t("runtime.noUsage")}
