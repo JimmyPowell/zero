@@ -2,6 +2,18 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 接入 CodeBuddy CLI（feat/codebuddy-cli 开发记录，未合并）
+
+把腾讯 **CodeBuddy Code** 作为新编码 Agent provider 接进来，和 Claude/Codex/OpenCode 一样支持「任务派发 · 日志回传 · 成本管理」。分支 `feat/codebuddy-cli`（基于 main `ecaa975`），合并由用户来。详见 [codebuddy-integration.md](./codebuddy-integration.md)。
+
+- **关键发现**：CodeBuddy（`@tencent-ai/codebuddy-code` v2.108.2）是 **Claude Code 衍生版**，无头接口与 `claude` 逐字段同构（`-p --output-format stream-json --verbose -y --model --resume --mcp-config`，事件流 `system/assistant/user/result` + `result.total_cost_usd`/`usage.*`）。多出的 `system/status`、`file-history-snapshot` 被 `claudeAdapter` 忽略。网关在 `www.codebuddy.ai`，**裸跑即通、无需代理**。
+- **daemon 零新 adapter**：把 `runClaude` 抽成 `runClaudeLike(bin)`，`runClaude`/`runCodebuddy` 薄包装只换二进制名，**复用 `claudeAdapter`**；`discover()` + `PROVIDERS` 各加一条（`mcp:true`，经 `--mcp-config` 注入 zero 上下文 MCP）。
+- **server**：`agent.provider` 枚举加 `codebuddy`（迁移 **0012 加性 MODIFY**，已应用 dev 库、主库无感）；`providerEnum` 同步。
+- **web**：`AgentProvider`/`PROVIDERS`/`providerLabel` 加 CodeBuddy；模型框新增按 provider 的常用模型 chips（低成本在前，CodeBuddy 给全量、codex 留空）。
+- **三件套**：派发（通用 `executeClaim`/并发）、日志（`claudeAdapter`→`run_event` detail→实时/回放/可展开 UI）、成本（`total_cost_usd`+token→`task_usage`）全部由现成通用管线覆盖。
+- **实测**：adapter 单测 **9/9**（真实抓取的 codebuddy stream-json）；**全链路 e2e 8/8**（真实 daemon 跑真实 `codebuddy` gemini-3.1-flash-lite：命令/输出进 detail、`task_usage` 入账 input 42185/output 31/cost 0、run 成功）；server/daemon/web `tsc` 全过。测试数据已清。
+- **后续**：agent 实际调用 zero MCP 工具的深度验证随真实仓库任务再确认；Phase 3（文件 diff/±行数/预览）仍后话。
+
 ## 2026-06-19 · 合并执行日志详情化 + Codex/OpenCode 接入（feat/run-log-detail → main）🎉
 
 - 把 `feat/run-log-detail`（Phase 1 日志详情化 + Phase 2 Codex/OpenCode 接入）合入 main。分支基于 `ec75ff0`（已含我方 §3.1 MCP / §3.2 增量 / 运行时管理），在其上做 provider 分发 + 详情化，**完整保留** `mcpConfig`/`buildPrompt(full)`/`usage`（且 MCP 按 provider 门控：`spec.mcp ? writeMcpConfig : undefined`，只 claude 注入）。
