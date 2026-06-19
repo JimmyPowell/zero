@@ -244,7 +244,7 @@ export interface UpdateIssuePayload {
   workDir?: string | null;
 }
 
-export type AgentProvider = "claude_code" | "codex" | "opencode";
+export type AgentProvider = "claude_code" | "codex" | "opencode" | "kimi";
 
 export interface Agent {
   id: string;

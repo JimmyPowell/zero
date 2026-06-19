@@ -22,11 +22,12 @@ import {
   type Runtime,
 } from "@/lib/api-client";
 
-const PROVIDERS: AgentProvider[] = ["claude_code", "codex", "opencode"];
+const PROVIDERS: AgentProvider[] = ["claude_code", "codex", "opencode", "kimi"];
 export const providerLabel: Record<AgentProvider, string> = {
   claude_code: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+  kimi: "Kimi",
 };
 
 export function CreateAgentDialog({
