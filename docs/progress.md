@@ -2,6 +2,18 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 执行日志详情化 Phase 1（分支 feat/run-log-detail，待合并）
+
+独立 worktree/分支，基于最新 main（含运行时管理），**未合并**（由用户合并）。把执行日志从「只有一行摘要」做成可逐步深入查看：
+
+- **现状盘点**：我们日志架构其实早已对齐 Multica —— `run_event`（provider 无关、seq 有序）≈ Multica 的 `task_message`；daemon 里 adapter 把原生流→统一事件；已有 SSE 实时 + 历史回放 + 彩色条。差距只在：详情藏在 payload 里没露出、实时流没带详情、截断太狠、UI 行不可展开。
+- **采集更全（迁移 0011，加 `run_event.detail`，向后兼容）**：claude-adapter 每条事件产出 `text`=一行摘要 + `detail`=完整内容 —— 工具完整命令(Bash)/格式化参数(JSON)、完整工具输出、完整思考、完整文本、用量 token 明细；放宽原 2000/4000 截断（detail 上限 16000）。
+- **实时也带详情**：daemon events 接口落 `detail`，SSE publish + backlog 都带上，跑动中即可展开看完整内容（不必等刷新）。
+- **可展开 UI（RunLogOverlay）**：每行加展开箭头 —— 折叠两行摘要、展开 `<pre>` 看完整命令/参数/输出/思考；顶部活动条由「一事件一格」升级为「连续同类合并成按占比分段 + 可点击跳转 + 跑动中末段脉冲」；复制全部改用完整内容。
+- **多 provider 统一**：`detail` 是 provider 无关字段，Codex/OpenCode 接入时各自 adapter 填同一字段即可（Phase 2）。
+- **实测**：adapter 单测 18/18（各事件 text 摘要 + detail 完整）、API 往返 6/6（daemon 发带 detail 事件 → 落库 → 历史接口返回 detail）；server/web/daemon tsc + build 全过。
+- **下一批**：Phase 2 = Codex + OpenCode 真正执行 + 各自 adapter（去掉「只接 Claude」）；Phase 3（后话）= 某次执行改了哪些文件/±行数/每文件 diff/文件预览。
+
 ## 2026-06-19 · 合并运行时管理升级（feat/runtime-management → main）🎉
 
 - 把 `feat/runtime-management`（作用域/可见性 · 成本落库 · 运行时级并发 · 运行时 CRUD+详情）合入 main。迁移 **0010 加性**（新列可空/默认、纯新增表 `runtime_workspace`/`task_usage`），已应用到 dev 库 → `db:migrate` no-op。
