@@ -146,3 +146,46 @@ APP_URL=http://localhost:5173   # 邮件里 issue 链接的 web 基址
 - **N4** 飞书自定义机器人。
 - **N5（独立最后档）** React Native + Expo 原生 App（复用 TS 逻辑/类型，UI 重写，APNs/FCM 推送 + 完整双向）。
 - 可并行/后置：站内小铃铛（`inbox` 表 + 工作空间级实时流，run-bus 扩到 workspace/user scope）+ 偏好设置页。
+
+## 十、双向回控（聊天指挥）方案
+
+> 目标：把通知从「只读」变成「可操作的指挥入口」—— 在 Telegram / 企微里就能新建 issue、选任意 issue、评论、改状态、指派 agent。Telegram 先行。
+
+### 文档核对结论
+- **Telegram**：命令菜单（`setMyCommands`）+ 内联按钮（`inline_keyboard` / `callback_data` **≤64 字节** / `callback_query` / `answerCallbackQuery` / `editMessageText`）+ 回复绑定（`reply_to_message`）+ `force_reply`。能力最全。
+- **企业微信智能机器人**：模板卡片 `button_interaction` + 点击回调 `template_card_event`（按钮带 `task_id`/`key`）+ `aibot_respond_update_msg` 更新卡片（**须 5 秒内回**）+ 文本命令。以「卡片按钮 + 文本命令」为主。
+
+### 交互模型（解决「不止默认一条」）
+| 方式 | 用法 | 适合 |
+|---|---|---|
+| 回复绑定 | 回复某条通知 → 评论到那个 issue（`outbox.ref`/内存存 `msgId↔issueId`） | 针对刚收到的 |
+| 活动 issue | `/use ZERO-N` 或列表点选 → 之后直接打字即评论它、按钮改状态 | 连续操作同一个 |
+| 命令带 id | `/comment ZERO-N …`、`/status ZERO-N done` | 指定任意 issue |
+| 按钮/列表 | `/issues` 列出 → 点选 → 弹「评论/改状态/指派」按钮 | 不想记 id |
+
+### 能力清单
+| 命令 / 操作 | 作用 | 复用 |
+|---|---|---|
+| `/new <标题>`（或引导式 标题→描述→指派） | 新建 issue | create |
+| `/issues`、`/search <词>` | 列最近/我的、搜索（按钮列表） | list/search |
+| `/show ZERO-N` | 看状态/指派/最近评论 | detail |
+| `/use ZERO-N` | 设为活动 issue | — |
+| 回复通知 / 活动态打字 / `/comment ZERO-N <文字>` | 评论（触发被指派 agent） | addComment + enqueueTask |
+| 状态按钮 / `/status ZERO-N done` | 改状态 | PATCH status |
+| `/priority ZERO-N high` | 改优先级 | PATCH priority |
+| `/assign ZERO-N <agent>` | 指派 agent（触发执行） | PATCH assignee + enqueueTask |
+| `/ws`、`/help` | 切工作空间、命令菜单 | — |
+
+全部以「绑定的 Zero 用户」身份执行 + 校验工作空间成员。
+
+### 架构
+各平台适配器（Telegram getUpdates / 企微卡片事件）把原生输入翻成统一**意图** → `lib/chat` **命令路由**（含每 chat 会话状态：当前 ws / 活动 issue / 多步流程，内存）→ **`lib/issue-actions`（共享动作层，从 `routes/issues.ts` 抽出，HTTP 与聊天共用）** → 现有 db/dispatch/notify。一处逻辑、两个入口。
+
+### 分期（每步独立验收，Telegram 先）
+- **C1 基础回控**：回复通知→评论；活动 issue（`/use` + 列表点选）；通知卡片带「✅完成/🔍评审」按钮；`/issues` 列表；`/show`、`/help`。
+- **C2 命令全集**：`/new`（引导式）、`/comment`、`/status`、`/priority`、`/assign`、`/search`、`/ws` + 命令菜单。
+- **C3 富交互**：状态/指派/优先级按钮选择器；操作后原地更新卡片；危险操作确认 + `/cancel`；回复绑定持久化到 `outbox.ref`。
+- 两平台共用同一 router：Telegram 先，企微随后（注意 5 秒更新窗口）。
+
+### 注意点
+企微卡片更新 5 秒窗口（先即时应答再异步）；Telegram `callback_data` 64 字节（塞不下用服务端短 token）；多步 `/new` 维护每 chat 待输入状态 + `/cancel`；回控评论会触发 agent（符合预期）。

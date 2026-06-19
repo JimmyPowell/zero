@@ -44,7 +44,9 @@ async function deliver(row: OutboxRow): Promise<void> {
   if (row.channel === "telegram") {
     const chatId = (binding.config as { chatId?: string })?.chatId;
     if (!chatId) throw new Error("telegram 绑定缺少 chatId");
-    await sendTelegramMessage(chatId, row.subject ?? "", row.body ?? "");
+    await sendTelegramMessage(chatId, row.subject ?? "", row.body ?? "", {
+      issueId: row.issueId ?? undefined,
+    });
     return;
   }
   // 其它渠道（telegram/feishu/webpush）后续 adapter 补

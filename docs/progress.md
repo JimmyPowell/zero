@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · C1 Telegram 双向回控（基础闭环）
+
+- **方案定稿**：双向回控（聊天指挥）完整方案 + 能力清单 + 分期 C1/C2/C3 写入 [notifications.md §十]。Telegram 先行。
+- **共享动作层** `lib/issue-actions.ts`（findIssueByNumber/listIssuesFor/getIssueBrief/addIssueComment/setIssueStatus）—— HTTP 与聊天共用一份逻辑。
+- **聊天核心** `lib/chat/core.ts`（平台无关）：每 chat 会话状态（当前 ws/活动 issue，内存）+ 从绑定恢复用户 + 命令/回复/活动态打字/按钮 → 统一 `ChatReply{text,buttons}`。
+- **Telegram 适配**：`telegram-bot.ts` 长轮询接 message + callback_query；命令 `/issues`（按钮列表）`/use`（选中+状态按钮）`/show` `/help` + `setMyCommands` 菜单；活动态打字即评论；**回复通知即评论**（内存 `msgId↔issueId`）；通知卡片附「✅完成/🔍评审」状态按钮（outbox 传 issueId）。
+- **验证**：server typecheck 通过；脚本驱动逐项实测——/issues 出 8 行按钮、/use 选中、活动态打字→评论入库、回复绑定→评论、按钮改状态 in_review→in_progress（含 DB 副作用 + 清理还原）全过。
+- 范围：C1 不含 /new、/comment、/status 文本命令、富交互（C2/C3）。下一步 C2 命令全集。
+
 ## 2026-06-19 · N3 Telegram 渠道（真机验证通过）
 
 - **网络现实**：本机直连 `api.telegram.org` 不可达（探测 HTTP 000，国内常态）。故代码全程预留 `TELEGRAM_PROXY`（Bun fetch `proxy` 选项）；本地真测需走代理，或在可出网节点跑。
