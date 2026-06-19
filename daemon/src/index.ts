@@ -18,6 +18,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { claudeAdapter } from "./claude-adapter";
+import { codexAdapter } from "./codex-adapter";
+import { opencodeAdapter } from "./opencode-adapter";
+import { asText } from "./adapter-util";
 import { makeReporter, type Reporter } from "./reporter";
 
 const HEARTBEAT_MS = 20_000;
@@ -463,6 +466,235 @@ async function runClaude(
   return { ok: true, result: result ?? "", sessionId, usage };
 }
 
+// ---- 通用 runner 协议 + 多 provider 分发 ----
+
+interface RunResult {
+  ok: boolean;
+  result?: string;
+  sessionId?: string;
+  error?: string;
+  usage?: RunUsage | null;
+}
+type RunOpts = {
+  model?: string | null;
+  sessionId?: string | null;
+  mcpConfig?: string;
+};
+type Runner = (
+  prompt: string,
+  cwd: string,
+  opts: RunOpts,
+  reporter: Reporter,
+) => Promise<RunResult>;
+
+// 逐行读取子进程 stdout 的换行分隔 JSON（codex/opencode 都是 JSONL）
+async function readJsonLines(
+  stdout: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  const reader = stdout.getReader();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (line) onLine(line);
+    }
+  }
+  if (buffer.trim()) onLine(buffer.trim());
+}
+
+// 跑 Codex（无头，流式）：`codex exec --json`。stdin 必须关（否则卡在读 stdin）。
+// 需联网（走 ChatGPT 后端，daemon 须带代理 env 启动）；会话续接走 `exec resume <id>`。
+async function runCodex(
+  prompt: string,
+  cwd: string,
+  opts: RunOpts,
+  reporter: Reporter,
+): Promise<RunResult> {
+  const cmd = ["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox"];
+  if (opts.model) cmd.push("-m", opts.model);
+  if (opts.sessionId) cmd.push("resume", opts.sessionId);
+  cmd.push(prompt);
+
+  const proc = Bun.spawn({
+    cmd,
+    stdin: "ignore", // 关键：codex 见非 TTY stdin 会等待读取而卡死
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd,
+    env: process.env, // 透传代理等 env
+  });
+
+  let result = "";
+  let sessionId: string | undefined;
+  let usage: RunUsage | null = null;
+  let fatal = false;
+  let errMsg: string | undefined;
+  const model = opts.model ?? null;
+
+  await readJsonLines(proc.stdout, (line) => {
+    let o: Record<string, any>;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (o.type === "thread.started" && o.thread_id) sessionId ??= o.thread_id;
+    if (o.type === "turn.failed") {
+      fatal = true;
+      errMsg = o.error?.message ?? "codex turn failed";
+    }
+    if (o.type === "item.completed" || o.type === "item.updated") {
+      const it = (o.item ?? {}) as Record<string, any>;
+      const t = String(it.type ?? it.item_type ?? "");
+      if (/agent.?message|assistant|message/i.test(t)) {
+        const txt = asText(it.text ?? it.message ?? it.content);
+        if (txt.trim()) result = txt;
+      }
+    }
+    if (o.type === "turn.completed") {
+      const u = (o.usage ?? o.turn?.usage ?? {}) as Record<string, any>;
+      usage = {
+        model,
+        costUsd: null, // codex 经 ChatGPT 订阅，无单价
+        inputTokens: num(u.input_tokens ?? u.input ?? u.prompt_tokens) ?? 0,
+        outputTokens: num(u.output_tokens ?? u.output ?? u.completion_tokens) ?? 0,
+        cacheReadTokens: num(u.cache_read_tokens ?? u.cache_read_input_tokens) ?? 0,
+        cacheWriteTokens:
+          num(u.cache_write_tokens ?? u.cache_creation_input_tokens) ?? 0,
+        durationMs: null,
+        numTurns: null,
+      };
+    }
+    for (const e of codexAdapter(o)) reporter.push(e);
+  });
+
+  const [stderr, code] = await Promise.all([
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0 || fatal) {
+    const detail = errMsg || stderr.trim() || `codex exited ${code}`;
+    console.error(`codex 失败 (exit ${code}): ${detail.slice(0, 400)}`);
+    return { ok: false, result, sessionId, error: String(detail).slice(0, 800), usage };
+  }
+  return { ok: true, result, sessionId, usage };
+}
+
+// 跑 OpenCode（无头，流式）：`opencode run --format json`。prompt 作末尾参数。
+// 会话续接走 `-s <id>`；用量（tokens + 真实 cost）来自 step_finish。
+async function runOpenCode(
+  prompt: string,
+  cwd: string,
+  opts: RunOpts,
+  reporter: Reporter,
+): Promise<RunResult> {
+  const cmd = ["opencode", "run", "--format", "json", "--dangerously-skip-permissions"];
+  if (opts.model) cmd.push("-m", opts.model);
+  if (opts.sessionId) cmd.push("-s", opts.sessionId);
+  cmd.push(prompt);
+
+  const proc = Bun.spawn({
+    cmd,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd,
+    env: { ...process.env, OPENCODE_PERMISSION: '{"*":"allow"}' },
+  });
+
+  let result = "";
+  let sessionId: string | undefined;
+  let sawError = false;
+  let errMsg: string | undefined;
+  let hasUsage = false;
+  const model = opts.model ?? null;
+  const usage: RunUsage = {
+    model,
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    durationMs: null,
+    numTurns: null,
+  };
+
+  await readJsonLines(proc.stdout, (line) => {
+    let o: Record<string, any>;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (o.sessionID) sessionId = o.sessionID;
+    if (o.type === "text" && typeof o.part?.text === "string") {
+      result += o.part.text;
+    }
+    if (o.type === "step_finish" && o.part) {
+      const t = (o.part.tokens ?? {}) as Record<string, any>;
+      hasUsage = true;
+      usage.inputTokens += num(t.input) ?? 0;
+      usage.outputTokens += num(t.output) ?? 0;
+      usage.cacheReadTokens += num(t.cache?.read) ?? 0;
+      usage.cacheWriteTokens += num(t.cache?.write) ?? 0;
+      usage.costUsd = (usage.costUsd ?? 0) + (num(o.part.cost) ?? 0);
+    }
+    if (o.type === "error") {
+      sawError = true;
+      errMsg = o.error?.data?.message ?? o.error?.message ?? "opencode error";
+    }
+    for (const e of opencodeAdapter(o)) reporter.push(e);
+  });
+
+  const [stderr, code] = await Promise.all([
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  const finalUsage = hasUsage ? usage : null;
+  // opencode 出错也可能 exit 0 → 以 error 事件为准
+  if (code !== 0 || sawError) {
+    const detail = errMsg || stderr.trim() || `opencode exited ${code}`;
+    console.error(`opencode 失败 (exit ${code}): ${detail.slice(0, 400)}`);
+    return {
+      ok: false,
+      result: result.trim(),
+      sessionId,
+      error: String(detail).slice(0, 800),
+      usage: finalUsage,
+    };
+  }
+  return { ok: true, result: result.trim(), sessionId, usage: finalUsage };
+}
+
+// provider → runner + 续接失败特征（用于回退新会话）+ 是否注入 MCP 上下文
+const PROVIDERS: Record<
+  string,
+  { runner: Runner; sessionInvalid: RegExp; mcp: boolean }
+> = {
+  claude_code: {
+    runner: runClaude,
+    sessionInvalid: /no conversation found|session id/i,
+    mcp: true,
+  },
+  codex: {
+    runner: runCodex,
+    sessionInvalid: /thread|session|resume|not found/i,
+    mcp: false,
+  },
+  opencode: {
+    runner: runOpenCode,
+    sessionInvalid: /session|not found/i,
+    mcp: false,
+  },
+};
+
 // 运行时级并发：同时最多跑 maxConcurrency 个任务（由服务端 hello/heartbeat 下发）
 let running = 0;
 let maxConcurrency = 1;
@@ -502,9 +734,12 @@ async function executeClaim(server: string, token: string, claim: Claim) {
   const title = claim.context?.issue.title ?? "";
   console.log(`认领任务 ${taskId}（${title}）· 在跑 ${running}/${maxConcurrency}`);
   try {
-    if (claim.agent?.provider !== "claude_code") {
+    // 按 agent.provider 选 runner（claude_code / codex / opencode）
+    const provider = claim.agent?.provider ?? "";
+    const spec = PROVIDERS[provider];
+    if (!spec) {
       await post(server, token, `/daemon/tasks/${taskId}/fail`, {
-        error: `provider ${claim.agent?.provider} 暂未支持（当前只接 Claude Code）`,
+        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode）`,
       });
       return;
     }
@@ -521,32 +756,30 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       });
       return;
     }
-    // 续接会话 → 只推增量评论（full=false）；新会话首跑 → 全量（full=true）
-    const prompt = buildPrompt(claim, { full: !priorSession });
-    // MCP：给 agent 按需回拉更深上下文（更早评论 / 历史运行）
-    const mcpConfig = writeMcpConfig(server, token, issueId);
+    const model = claim.agent?.model ?? null;
+    // MCP 仅 claude（按需回拉更深上下文）；codex/opencode 走 prompt 内推送的上下文
+    const mcpConfig = spec.mcp
+      ? writeMcpConfig(server, token, issueId)
+      : undefined;
     // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
     const reporter = makeReporter(async (events) => {
       await post(server, token, `/daemon/tasks/${taskId}/events`, { events });
     });
-    let r = await runClaude(
-      prompt,
+    // 续接会话 → 只推增量评论（full=false）；新会话首跑 → 全量（full=true）
+    let r = await spec.runner(
+      buildPrompt(claim, { full: !priorSession }),
       cwd,
-      { model: claim.agent.model, sessionId: priorSession, mcpConfig },
+      { model, sessionId: priorSession, mcpConfig },
       reporter,
     );
     let usage = r.usage ?? null;
     // 会话失效（换目录/过期/被删）→ 新会话重跑：必须用全量 prompt（新会话无记忆），否则失忆
-    if (
-      !r.ok &&
-      priorSession &&
-      /no conversation found|session id/i.test(r.error ?? "")
-    ) {
+    if (!r.ok && priorSession && spec.sessionInvalid.test(r.error ?? "")) {
       console.log(`会话 ${priorSession} 失效，改用新会话重跑（全量上下文）`);
-      r = await runClaude(
+      r = await spec.runner(
         buildPrompt(claim, { full: true }),
         cwd,
-        { model: claim.agent.model, mcpConfig },
+        { model, mcpConfig },
         reporter,
       );
       usage = mergeUsage(usage, r.usage ?? null); // 累计两次执行成本
