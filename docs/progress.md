@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 立项记录：Agent 凭据注入（BYOK）⏳待办
+
+- **调研**：Zero 现状 = daemon `env: process.env` **复用机器登录态**（claude OAuth / codex ChatGPT / opencode 存盘），控制层无凭据字段。Multica 已做 per-agent `custom_env`（BYOK，注入 `ANTHROPIC_API_KEY`/`*_BASE_URL`/Bedrock 等），但**值明文存 DB**。
+- **需求度**：个人自己 Mac 够用（低）；一旦**云端无头 runtime / 多账号 / 代理路由 / 企业 Bedrock** 就是刚需。
+- **方案已写入 [`docs/agent-credentials.md`](agent-credentials.md)**：per-agent（可选 per-runtime）custom_env，spawn 时 merge env；**差异化 = 加密存（AES-GCM）+ 审计读端点 + 系统键黑名单**（不学 Multica 明文）。改动小（迁移 + 端点 + daemon 一行 merge + 表单）。
+- **状态**：先不做，等要上云端/多账号/代理时再启。
+
 ## 2026-06-19 · 合并外部通知 + 设置页 + Telegram 回控（feat/notifications → main）🎉
 
 - 把 `feat/notifications`（邮件/企微/Telegram 三渠道出站 + 设置页自助绑定 + 事件→`notification_outbox`→渠道 adapter 可靠投递 + Telegram 双向回控 C1/C2）合入 main。分支基于很早的 `8a0ab40`，跨度大。
