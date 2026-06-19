@@ -77,3 +77,67 @@
 **验证**：server/daemon typecheck；MCP server 独连真端点（initialize / tools/list / 两个 tools/call 均正确、ISO-Z、工作空间隔离）；**真机 e2e**：强制 agent 用工具 → init 显示 32 个工具（30+2）、agent 调 `mcp__zero__zero_prior_runs` 拿到真数据并正确作答、tool_call 进了执行流时间线。
 
 **边界 / 后续**：当前 2 个工具（更早评论 / 历史运行）；关联 issue 搜索、上次 run 的 diff（repo 模式其实可直接走 git）可作下一批。令牌走 MCP 配置文件 0600；如需更严可改每任务短令牌。
+
+## 6. 会话模型：runtime / agent / session / 任务的关系
+
+```
+账号 User
+  │ owns (owner_id)
+  ▼
+运行时 Runtime  —— 一台装了 claude 的机器 + 配对令牌（贵、可共享的"资源"）
+  │  · visibility: private | workspace      谁能用
+  │  · max_concurrency: N                    这台机器同时最多并行 N 个任务
+  │  · runtime_workspace 表                  上架到哪些工作空间（触达范围）
+  │
+  │  被绑定（N 个 agent : 1 runtime）
+  ▼
+工作空间 Workspace
+  ├─ 智能体 Agent  = 轻量"人设/配置"（name·model·instructions·provider + runtimeId）
+  │      └─ 只属于一个 workspace，绑一台 runtime
+  │
+  └─ Issue（assignee = 某个 agent）
+        └─ 时间线 issue_event[]：comment / status_change / run_*  ← 你的评论、agent 回复都挂这
+              │  新评论/指派 → enqueueTaskForIssue
+              ▼
+          Task（一次执行）  · (agentId, issueId)  · sessionId=该(agent,issue)上次会话 or null
+              │  runtime 在并发上限内 claim（pump 填槽）
+              ▼
+          daemon 跑 claude  ①--resume <sessionId>（续接旧对话）
+                            ②--mcp-config（注入 zero_older_comments / zero_prior_runs）
+              · session = 按 (agent, issue) 一条，cwd 固定，存在那台机器上
+              └→ run_event[]（执行流）+ task_usage（成本）+ 结果 comment + issue→评审中
+```
+
+三层一句话：**Runtime=机器（资源/并发/四象限）｜Agent=人设（绑机器）｜Session=按 (agent,issue) 的一条对话线**。
+
+**会话连续性**：同一 (agent, issue) 多轮共用一条 claude session。第 N 次评论 → 新 Task 带上次 `sessionId` → daemon `claude --resume` 把旧对话整段加载 → 把新评论当新一轮 user 输入追加 → 续着做。理想就是"一条会话连到尾"。
+
+### 6.1 两种 push 模式 —— 20 限制只在"无会话记忆"时生效
+
+| 模式 | 何时 | 推什么 | 碰 20 限制？ |
+|---|---|---|---|
+| **增量** `full=false` | **resume 成功**（顺路径） | 只推"上次之后的新评论"（通常 1–2 条） | ❌ 基本不碰 |
+| **全量** `full=true` | **无会话记忆**：① 冷启动首跑 ② resume 失败回退新会话 | 最近 20 条当 bootstrap | ✅ 这里才封顶 |
+
+**关键认知**：resume 成功时旧评论在底层 session 里、没丢，push 只补增量，**20 限制压根不参与**。第 21、第 100 条评论在顺路径下都一样——每次只推那一条新的。
+
+`20` 限制真正咬人只在三种"无记忆"情况：
+1. **冷启动**：agent 第一次跑之前人已讨论 >20 条 → 首跑（新会话）全量只塞最近 20，更早的没进 prompt。
+2. **resume 失败回退**：会话过期/换机器/被删 → 退新会话（无记忆）→ 同上。
+3. **一个间隔猛灌 >20 条**：增量本应是这一大批，但 assembleContext 只捞最近 20 → 最早几条被挤出窗口（session 里也没有，因为是新的）。
+
+这三种都靠 **pull 兜底**找回。所以分工：
+- **session（底层会话）** = 装全部历史，顺路径永不丢。
+- **push 20** = 仅在无 session 记忆时当冷启动地板（`dispatch.ts` 写死 `.limit(20)`，可调）。
+- **pull（MCP）** = 补"地板之外 / 会话丢了 / 灌评论 >20"的兜底。
+
+> 顺路径下 pull 基本用不上（会话已全有），它的价值在**不顺路径**——是保险，不是主力。
+
+### 6.2 同一 issue 下 @ 另一个 agent（多 agent 协作）
+
+session 按 **(agent, issue)** 一条，所以 @ agent B：
+- B 查自己 (B, issue) 历史 → 无 → **全新 session**（不继承 A 的记忆）。
+- 但 push 会把 issue + 最近评论（**含 A 的发言**，同一条时间线）塞给 B → B 看得到来龙去脉；还能 pull 看 A 的运行/更早评论。
+- 即：**一个 issue 下多 agent = 多条平行 session，共享同一条 issue 时间线当上下文。**
+
+⚠️ 现状：评论只触发该 issue 的 **assignee** agent（`enqueueTaskForIssue` 走 `assigneeId`）；@-mention 点名别的 agent **尚未接线**，但数据模型（session per (agent,issue)）天然支持，将来加只是"解析 @ → 给被点 agent 也建 task"。

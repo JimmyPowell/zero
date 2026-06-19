@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 上下文流程全面 e2e + 修复 push 窗口取最老 20 的 bug
+
+- **bug（测试揪出来的）**：`assembleContext` 注释写"最近 20 条"，实现却用 `asc + limit 20`（=**最老** 20 条）。issue ≤20 条无感，>20 条就错：冷启动/回退拿到最老评论而非最新；resume 增量基于最老窗口 → 新评论可能不在窗口里被漏掉。修复：`desc + limit 20` 取最新 20，再 `reverse()` 回时间正序供前缀计数/展示。
+- **全面 e2e（真打后端 + 真跑 claude，13/13 通过）**：
+  - **A happy 增量**：同一 (agent,issue) 三轮续接，turn3 凭记忆答出跨轮的 暗号A(描述里)+暗号B(turn2 评论里)，`resumeFromIndex` 走增量。
+  - **B >20 评论**：push 封顶 20、最老的第1条被挤出窗口 → agent 自动调 `mcp__zero__zero_older_comments` 回拉、答出 BANANA42（pull 兜底闭环）。
+  - **C 会话丢失**：篡改 session_id → daemon 检测失效、回退**全量** push、仍答出暗号B、写入新会话 id（不失忆）。
+- **文档**：`agent-context-model.md` 补 §6 会话模型（runtime/agent/session/任务关系图、两种 push 模式、20 限制何时生效、@-mention 多 agent）。
+
 ## 2026-06-19 · 合并运行时管理升级（feat/runtime-management → main）🎉
 
 - 把 `feat/runtime-management`（作用域/可见性 · 成本落库 · 运行时级并发 · 运行时 CRUD+详情）合入 main。迁移 **0010 加性**（新列可空/默认、纯新增表 `runtime_workspace`/`task_usage`），已应用到 dev 库 → `db:migrate` no-op。

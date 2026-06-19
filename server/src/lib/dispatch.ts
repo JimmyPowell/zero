@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 
@@ -102,7 +102,9 @@ export async function assembleContext(
     .limit(1);
   if (!iss) return null;
 
-  // 最近 20 条评论（含作者，member/agent 都解析）
+  // 最近 20 条评论（含作者，member/agent 都解析）。
+  // 取「最新 20 条」用 desc+limit，再 reverse 回时间正序（最早→最晚），
+  // 供 resumeFromIndex 前缀计数与展示。注意：不能用 asc+limit（那是最老 20 条）。
   const comments = await db
     .select({
       body: schema.issueEvent.body,
@@ -132,8 +134,9 @@ export async function assembleContext(
         eq(schema.issueEvent.kind, "comment"),
       ),
     )
-    .orderBy(asc(schema.issueEvent.createdAt))
+    .orderBy(desc(schema.issueEvent.createdAt))
     .limit(20);
+  comments.reverse(); // desc 取到最新 20 条后翻回时间正序（最早→最晚）
 
   let repo = null;
   if (iss.repoId) {
