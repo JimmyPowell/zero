@@ -314,7 +314,9 @@ export const runEvent = mysqlTable(
     tool: varchar("tool", { length: 32 }),
     // 原始工具名（如 Bash / exec_command），保真用
     toolName: varchar("tool_name", { length: 128 }),
-    text: text("text"), // 给人看的展示文本
+    text: text("text"), // 折叠态摘要（一行）
+    // 展开态完整内容（与 provider 无关）：工具完整命令/参数、完整输出、完整思考、完整文本
+    detail: text("detail"),
     payload: json("payload"), // 原始 provider 事件（全保真）
     createdAt: timestamp("created_at", { fsp: 3 })
       .notNull()
