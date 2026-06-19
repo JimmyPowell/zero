@@ -102,12 +102,44 @@ function enabled(caps: Record<string, boolean>): string {
   return on.length ? on.join(", ") : "（未发现任何 CLI）";
 }
 
+function num(v: unknown): number | undefined {
+  return typeof v === "number" ? v : undefined;
+}
+
 // ---- 任务执行 ----
 
 type WorkSpec =
   | { mode: "repo"; repoUrl: string; baseBranch: string; branch: string }
   | { mode: "dir"; path: string }
   | { mode: "empty" };
+
+// 一次执行的用量/成本（取自 Claude result 事件）
+interface RunUsage {
+  model: string | null;
+  costUsd: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  durationMs: number | null;
+  numTurns: number | null;
+}
+
+// 累加多次执行（如会话失效后重跑）的用量
+function mergeUsage(a: RunUsage | null, b: RunUsage | null): RunUsage | null {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    model: b.model ?? a.model,
+    costUsd: (a.costUsd ?? 0) + (b.costUsd ?? 0),
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+    durationMs: (a.durationMs ?? 0) + (b.durationMs ?? 0),
+    numTurns: (a.numTurns ?? 0) + (b.numTurns ?? 0),
+  };
+}
 
 interface Claim {
   task: { id: string; issueId: string; sessionId: string | null } | null;
@@ -327,7 +359,13 @@ async function runClaude(
   cwd: string,
   opts: { model?: string | null; sessionId?: string | null; mcpConfig?: string },
   reporter: Reporter,
-): Promise<{ ok: boolean; result?: string; sessionId?: string; error?: string }> {
+): Promise<{
+  ok: boolean;
+  result?: string;
+  sessionId?: string;
+  error?: string;
+  usage?: RunUsage | null;
+}> {
   const cmd = [
     "claude",
     "-p",
@@ -352,6 +390,8 @@ async function runClaude(
 
   let result: string | undefined;
   let sessionId: string | undefined;
+  let model: string | null = null;
+  let usage: RunUsage | null = null;
   let isError = false;
 
   const handleLine = (line: string) => {
@@ -361,14 +401,27 @@ async function runClaude(
     } catch {
       return; // 非 JSON 行跳过
     }
-    // 捕获最终结果 / 会话 id
-    if (obj.type === "system" && obj.subtype === "init" && obj.session_id) {
-      sessionId ??= obj.session_id;
+    // 捕获最终结果 / 会话 id / 模型
+    if (obj.type === "system" && obj.subtype === "init") {
+      if (obj.session_id) sessionId ??= obj.session_id;
+      if (obj.model) model ??= obj.model;
     }
     if (obj.type === "result") {
       if (typeof obj.result === "string") result = obj.result;
       if (obj.session_id) sessionId = obj.session_id;
       if (obj.is_error) isError = true;
+      // 权威成本 + token 用量（claude result 事件）
+      const u = (obj.usage ?? {}) as Record<string, any>;
+      usage = {
+        model,
+        costUsd: num(obj.total_cost_usd) ?? null,
+        inputTokens: num(u.input_tokens) ?? 0,
+        outputTokens: num(u.output_tokens) ?? 0,
+        cacheReadTokens: num(u.cache_read_input_tokens) ?? 0,
+        cacheWriteTokens: num(u.cache_creation_input_tokens) ?? 0,
+        durationMs: num(obj.duration_ms) ?? null,
+        numTurns: num(obj.num_turns) ?? null,
+      };
     }
     for (const e of claudeAdapter(obj)) {
       reporter.push(e);
@@ -404,30 +457,50 @@ async function runClaude(
       result,
       sessionId,
       error: String(detail).slice(0, 800),
+      usage,
     };
   }
-  return { ok: true, result: result ?? "", sessionId };
+  return { ok: true, result: result ?? "", sessionId, usage };
 }
 
-let busy = false;
+// 运行时级并发：同时最多跑 maxConcurrency 个任务（由服务端 hello/heartbeat 下发）
+let running = 0;
+let maxConcurrency = 1;
+let pumping = false;
 
-async function tick(server: string, token: string) {
-  if (busy) return;
-  let claim: Claim;
+// 认领循环：在空闲槽位内尽量多领任务并行执行；领空或满槽即停。
+async function pump(server: string, token: string) {
+  if (pumping) return; // 防止 interval 与 slot 释放重入造成超额认领
+  pumping = true;
   try {
-    claim = await post<Claim>(server, token, "/daemon/tasks/claim", {});
-  } catch (err) {
-    console.error(`认领失败：${(err as Error).message}`);
-    return;
+    while (running < maxConcurrency) {
+      let claim: Claim;
+      try {
+        claim = await post<Claim>(server, token, "/daemon/tasks/claim", {});
+      } catch (err) {
+        console.error(`认领失败：${(err as Error).message}`);
+        break;
+      }
+      if (!claim.task) break; // 没有排队任务了
+      running++;
+      // 不 await：并行执行；槽位在完成后释放并尝试再填
+      void executeClaim(server, token, claim).finally(() => {
+        running--;
+        void pump(server, token);
+      });
+    }
+  } finally {
+    pumping = false;
   }
-  if (!claim.task) return;
+}
 
-  busy = true;
-  const taskId = claim.task.id;
-  const issueId = claim.task.issueId;
-  const priorSession = claim.task.sessionId;
+// 执行单个已认领的任务（不管并发槽位，由 pump 负责）
+async function executeClaim(server: string, token: string, claim: Claim) {
+  const taskId = claim.task!.id;
+  const issueId = claim.task!.issueId;
+  const priorSession = claim.task!.sessionId;
   const title = claim.context?.issue.title ?? "";
-  console.log(`认领任务 ${taskId}（${title}）`);
+  console.log(`认领任务 ${taskId}（${title}）· 在跑 ${running}/${maxConcurrency}`);
   try {
     if (claim.agent?.provider !== "claude_code") {
       await post(server, token, `/daemon/tasks/${taskId}/fail`, {
@@ -462,6 +535,7 @@ async function tick(server: string, token: string) {
       { model: claim.agent.model, sessionId: priorSession, mcpConfig },
       reporter,
     );
+    let usage = r.usage ?? null;
     // 会话失效（换目录/过期/被删）→ 新会话重跑：必须用全量 prompt（新会话无记忆），否则失忆
     if (
       !r.ok &&
@@ -475,12 +549,14 @@ async function tick(server: string, token: string) {
         { model: claim.agent.model, mcpConfig },
         reporter,
       );
+      usage = mergeUsage(usage, r.usage ?? null); // 累计两次执行成本
     }
     await reporter.flush(); // 收尾，确保尾部事件全部送达
     if (r.ok) {
       await post(server, token, `/daemon/tasks/${taskId}/complete`, {
         summary: r.result,
         sessionId: r.sessionId,
+        usage, // 权威成本/token → 服务端落 task_usage
       });
       console.log(`任务 ${taskId} 完成`);
     } else {
@@ -497,8 +573,6 @@ async function tick(server: string, token: string) {
     } catch {
       /* 上报失败也忽略 */
     }
-  } finally {
-    busy = false;
   }
 }
 
@@ -511,28 +585,45 @@ async function worker() {
   console.log(`[${new Date().toISOString()}] Zero daemon → ${server}`);
   console.log(`发现工具：${enabled(caps)}`);
 
-  let info: { runtimeId: string; workspaceId: string; name: string };
+  let info: {
+    runtimeId: string;
+    workspaceId: string;
+    name: string;
+    maxConcurrency?: number;
+  };
   try {
     info = await post(server, token, "/daemon/hello", { capabilities: caps });
   } catch (err) {
     console.error(`连接失败：${(err as Error).message}`);
     process.exit(1);
   }
-  console.log(`已连接：${info.name}（runtime ${info.runtimeId}）`);
+  if (typeof info.maxConcurrency === "number" && info.maxConcurrency >= 1) {
+    maxConcurrency = info.maxConcurrency;
+  }
+  console.log(
+    `已连接：${info.name}（runtime ${info.runtimeId}）· 并发上限 ${maxConcurrency}`,
+  );
 
   startPicker(); // 本地文件夹选择器
 
   const hb = setInterval(async () => {
     try {
-      await post(server, token, "/daemon/heartbeat", {
-        capabilities: discover(),
-      });
+      // 心跳响应回带最新并发上限（用户在 Web 改了即时生效）
+      const res = await post<{ maxConcurrency?: number }>(
+        server,
+        token,
+        "/daemon/heartbeat",
+        { capabilities: discover() },
+      );
+      if (typeof res.maxConcurrency === "number" && res.maxConcurrency >= 1) {
+        maxConcurrency = res.maxConcurrency;
+      }
     } catch (err) {
       console.error(`心跳失败：${(err as Error).message}`);
     }
   }, HEARTBEAT_MS);
 
-  const claimer = setInterval(() => void tick(server, token), CLAIM_MS);
+  const claimer = setInterval(() => void pump(server, token), CLAIM_MS);
 
   const shutdown = () => {
     clearInterval(hb);

@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并运行时管理升级（feat/runtime-management → main）🎉
+
+- 把 `feat/runtime-management`（作用域/可见性 · 成本落库 · 运行时级并发 · 运行时 CRUD+详情）合入 main。迁移 **0010 加性**（新列可空/默认、纯新增表 `runtime_workspace`/`task_usage`），已应用到 dev 库 → `db:migrate` no-op。
+- **冲突处理**（都在 daemon 执行链与 daemon 路由）：
+  - `daemon/index.ts` 会话回退分支：合并「我方 §3.2 增量 prompt + §3.1 `mcpConfig`」与「分支用量累计」。**关键修正**：分支回退里复用了 `prompt`，但 §3.2 后 `prompt` 已是增量版 → 回退改用 `buildPrompt(claim,{full:true})` 全量重建，再 `mergeUsage` 累计成本。
+  - `runClaude` 同时带 `mcpConfig`（我）+ `usage` 返回（分支）；`pump/executeClaim`（分支并发池）与 `import.meta.main` 守卫（我）共存。
+  - `routes/daemon.ts` claim 处理：分支并发守卫 + 条件抢占 与 我方 `assembleContext({agentId,resuming})` 共存；我方 §3.1 `GET /issues/:id/{comments,runs}` 与分支 usage/并发接口并列。
+- **校验**：server/daemon/web typecheck + web build 全过；`db:migrate` no-op；端到端复跑（见下）。
+
 ## 2026-06-19 · §3.1 混合上下文：push 保底 + MCP 按需拉深
 
 - **目标**：push 把地板（issue+最近评论+work）塞进 prompt，再给 agent 一个 MCP 工具按需回拉"地板之外"的更深上下文 —— 拿到 Multica 那样的扩展性，又不丢 Zero 的确定性。
@@ -31,6 +40,18 @@
 - **修复**：`issues.ts` 加 `isoTime()`，把 `shape()` 输出的 `createdAt/updatedAt/lastActivityAt` 统一规范成带 `Z` 的 ISO（裸串当 UTC 补 `Z`，与列口径一致）。一处改动覆盖 list/search/detail（`shapeDetail` spread `shape`）。前端无需改。
 - **实测**：`lastActivityAt` 现与最新事件 `createdAt` **逐字节一致**（`09:39:10.446Z`），相对时间正确（12 分钟前）。
 - **附记**：OrbStack 的 MySQL 容器时钟比宿主慢 8h（`UTC_TIMESTAMP()` 偏移），但写入都走宿主 `new Date()`，不污染存量数据；属环境瑕疵，未处理。
+
+## 2026-06-19 · 运行时管理升级（feat/runtime-management 开发记录）
+
+独立 worktree/分支开发，已由本次合并并入 main。把原先「只能增删」的运行时管理补成完整能力：
+
+- **数据模型（迁移 0010，向后兼容、含回填）**：`runtime` 加 `owner_id`(账号级归属)、`visibility`(private|workspace)、`max_concurrency`(默认1)；新表 `runtime_workspace`(触达范围，支持跨工作空间上架)；新表 `task_usage`(每任务 token + **Claude 权威 `total_cost_usd`**)。回填：现有运行时补 reach 行 + owner，避免改用 reach 查询后从列表消失。
+- **作用域 / 可见性（两个正交轴）**：① 谁能用 = 私有(仅 owner) / 共享(工作空间全员)；② 在哪些工作空间 = 当前 / 选定多个 / 全部（`runtime_workspace`）。覆盖 4 种场景（自己用 / 工作空间共享 / 跨工作空间共享 / 多空间但仅自己）。列表过滤 = reach∩(共享|自己)；绑 agent、删除、改 reach 都按归属/角色鉴权（owner 整体删，工作空间管理员仅本空间下架）。比 Multica「每个工作空间各注册一份」更省（账号归属，一处上架多处用）。
+- **运行时级并发**：daemon 由 `busy` 串行 → 并发池 `pump`（填槽至 `maxConcurrency`）；服务端 hello/heartbeat 下发上限（Web 改完即时生效），claim 加上限守卫 + 条件 UPDATE 抢占（防并行重复领取）。
+- **成本管理**：daemon 从 claude `result` 事件采集 model/cost/token（重跑累计）→ `complete` 落 `task_usage` → 运行时详情页按总览 / 按天 / 按 agent 展示。**直接用 Claude 的权威成本**，不维护易过期的硬编码定价表（差异化于 Multica）。
+- **前端**：运行时 CRUD 补齐 —— 列表行可点进**详情页**（基本信息 / 触达范围 / 绑定 agent / 用量成本）+ **编辑弹窗**（私有·共享分段 + 并发步进 + 触达范围多选）；列表加可见性/并发/绑定数徽标。i18n zh/en 补齐。
+- **实测**：server+daemon+web `tsc`/build 全过；独立端口跑后端 + 模拟 daemon 全链路 e2e **28/28 通过**（创建带跨工作空间 reach、私有可见性、并发上限 claim 守卫、usage 落库与按天/按 agent 聚合、改 reach 下架、owner 删除）。
+- **下一批（本轮未做）**：模型发现下拉（daemon 上报各 CLI 可用模型，根治填错模型）、daemon 上报增强（设备名/版本）、健康态细化（online/recently_lost/offline）。
 
 ## 2026-06-19 · 合并实时执行日志（feat/agent-exec-stream → main）🎉
 

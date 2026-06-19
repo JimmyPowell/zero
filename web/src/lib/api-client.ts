@@ -274,19 +274,88 @@ export interface UpdateAgentPayload {
   runtimeId?: string | null;
 }
 
+export type RuntimeVisibility = "private" | "workspace";
+
 export interface Runtime {
   id: string;
   name: string;
   kind: "local" | "cloud";
   online: boolean;
+  visibility: RuntimeVisibility;
+  maxConcurrency: number;
+  ownerId: string | null;
+  ownerName: string | null;
+  isOwner: boolean;
+  agentCount: number;
   capabilities: Record<string, boolean> | null;
   lastHeartbeatAt: string | null;
   createdAt: string;
 }
 
+export interface RuntimeReachWorkspace {
+  id: string;
+  name: string;
+}
+
+export interface RuntimeBoundAgent {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  provider: AgentProvider;
+}
+
+export interface RuntimeUsageSummary {
+  days: number;
+  runs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export interface RuntimeDetail {
+  runtime: Runtime;
+  reach: RuntimeReachWorkspace[];
+  agents: RuntimeBoundAgent[];
+  usage: RuntimeUsageSummary;
+}
+
+export interface RuntimeUsageByDay {
+  date: string;
+  runs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface RuntimeUsageByAgent {
+  agentId: string | null;
+  agentName: string | null;
+  runs: number;
+  costUsd: number;
+  tokens: number;
+}
+
+export interface RuntimeUsageDetail {
+  days: number;
+  byDay: RuntimeUsageByDay[];
+  byAgent: RuntimeUsageByAgent[];
+}
+
 export interface CreateRuntimePayload {
   name: string;
   kind?: "local" | "cloud";
+  visibility?: RuntimeVisibility;
+  maxConcurrency?: number;
+  workspaceIds?: string[];
+}
+
+export interface UpdateRuntimePayload {
+  name?: string;
+  visibility?: RuntimeVisibility;
+  maxConcurrency?: number;
+  workspaceIds?: string[];
 }
 
 export interface CreateRepoPayload {
@@ -442,8 +511,29 @@ export const api = {
       { method: "POST", body: payload },
     ),
 
+  getRuntime: (workspaceId: string, id: string) =>
+    request<RuntimeDetail>(`/workspaces/${workspaceId}/runtimes/${id}`),
+
+  updateRuntime: (
+    workspaceId: string,
+    id: string,
+    payload: UpdateRuntimePayload,
+  ) =>
+    request<{ runtime: Runtime }>(
+      `/workspaces/${workspaceId}/runtimes/${id}`,
+      { method: "PATCH", body: payload },
+    ),
+
+  getRuntimeUsage: (workspaceId: string, id: string, days?: number) =>
+    request<RuntimeUsageDetail>(
+      `/workspaces/${workspaceId}/runtimes/${id}/usage${
+        days != null ? `?days=${days}` : ""
+      }`,
+    ),
+
   deleteRuntime: (workspaceId: string, id: string) =>
-    request<{ ok: boolean }>(`/workspaces/${workspaceId}/runtimes/${id}`, {
-      method: "DELETE",
-    }),
+    request<{ ok: boolean; deleted: boolean }>(
+      `/workspaces/${workspaceId}/runtimes/${id}`,
+      { method: "DELETE" },
+    ),
 };

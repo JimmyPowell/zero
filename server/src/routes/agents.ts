@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { requireAuth } from "@/middleware/auth";
@@ -32,15 +32,27 @@ const updateSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, "没有要更新的字段");
 
-// 校验运行时属于本工作空间
-async function runtimeInWorkspace(workspaceId: string, runtimeId: string) {
+// 校验运行时在本工作空间「可用」：触达到本空间 且（共享 或 绑定者就是 owner）
+async function runtimeUsableInWorkspace(
+  workspaceId: string,
+  userId: string,
+  runtimeId: string,
+) {
+  const reach = db
+    .select({ id: schema.runtimeWorkspace.runtimeId })
+    .from(schema.runtimeWorkspace)
+    .where(eq(schema.runtimeWorkspace.workspaceId, workspaceId));
   const rows = await db
     .select({ id: schema.runtime.id })
     .from(schema.runtime)
     .where(
       and(
         eq(schema.runtime.id, runtimeId),
-        eq(schema.runtime.workspaceId, workspaceId),
+        inArray(schema.runtime.id, reach),
+        or(
+          eq(schema.runtime.visibility, "workspace"),
+          eq(schema.runtime.ownerId, userId),
+        ),
       ),
     )
     .limit(1);
@@ -83,8 +95,15 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
     if (await nameTaken(workspaceId, body.name)) {
       return c.json({ error: "该名称已被占用" }, 409);
     }
-    if (body.runtimeId && !(await runtimeInWorkspace(workspaceId, body.runtimeId))) {
-      return c.json({ error: "运行时不存在" }, 400);
+    if (
+      body.runtimeId &&
+      !(await runtimeUsableInWorkspace(
+        workspaceId,
+        c.get("user").sub,
+        body.runtimeId,
+      ))
+    ) {
+      return c.json({ error: "运行时不存在或在此工作空间不可用" }, 400);
     }
 
     const id = crypto.randomUUID();
@@ -123,8 +142,15 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
     if (patch.name && (await nameTaken(workspaceId, patch.name, id))) {
       return c.json({ error: "该名称已被占用" }, 409);
     }
-    if (patch.runtimeId && !(await runtimeInWorkspace(workspaceId, patch.runtimeId))) {
-      return c.json({ error: "运行时不存在" }, 400);
+    if (
+      patch.runtimeId &&
+      !(await runtimeUsableInWorkspace(
+        workspaceId,
+        c.get("user").sub,
+        patch.runtimeId,
+      ))
+    ) {
+      return c.json({ error: "运行时不存在或在此工作空间不可用" }, 400);
     }
 
     await db
