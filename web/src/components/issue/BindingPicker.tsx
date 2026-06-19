@@ -46,23 +46,9 @@ export function BindingPicker({
   const { t } = useUi();
   const [repos, setRepos] = useState<Repo[]>([]);
   const [addOpen, setAddOpen] = useState(false);
-  const [dirInput, setDirInput] = useState(false);
-  const [dirPath, setDirPath] = useState("");
+  const [dirEditing, setDirEditing] = useState(false);
+  const [dirDraft, setDirDraft] = useState("");
   const [browseErr, setBrowseErr] = useState(false);
-
-  // 调本机 daemon 的本地选择器，弹原生文件夹对话框回填绝对路径
-  async function browseFolder() {
-    setBrowseErr(false);
-    try {
-      const res = await fetch("http://127.0.0.1:8799/pick-folder", {
-        signal: AbortSignal.timeout(180000),
-      });
-      const data = (await res.json()) as { path: string | null };
-      if (data.path) setDirPath(data.path);
-    } catch {
-      setBrowseErr(true);
-    }
-  }
 
   useEffect(() => {
     let alive = true;
@@ -75,9 +61,40 @@ export function BindingPicker({
     };
   }, [workspaceId]);
 
+  // 已绑工作目录时，草稿跟随committed值
+  useEffect(() => {
+    if (value.kind === "dir") setDirDraft(value.workDir);
+  }, [value]);
+
   const repo =
     value.kind === "repo" ? repos.find((r) => r.id === value.repoId) : null;
   const branch = issueNumber ? `zero/ZERO-${issueNumber}` : "zero/ZERO-N";
+  const showDir = dirEditing || value.kind === "dir";
+
+  // 提交工作目录绑定（非空才提交）
+  function commitDir(path?: string) {
+    const p = (path ?? dirDraft).trim();
+    if (p && !(value.kind === "dir" && value.workDir === p)) {
+      onChange({ kind: "dir", workDir: p });
+    }
+  }
+
+  // 调本机 daemon 的本地选择器，弹原生文件夹对话框 → 回填并立即提交
+  async function browseFolder() {
+    setBrowseErr(false);
+    try {
+      const res = await fetch("http://127.0.0.1:8799/pick-folder", {
+        signal: AbortSignal.timeout(180000),
+      });
+      const data = (await res.json()) as { path: string | null };
+      if (data.path) {
+        setDirDraft(data.path);
+        commitDir(data.path); // 选完即生效，无需再点确定
+      }
+    } catch {
+      setBrowseErr(true);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -102,10 +119,15 @@ export function BindingPicker({
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-[240px]">
-          <DropdownMenuItem onSelect={() => onChange({ kind: "none" })}>
+          <DropdownMenuItem
+            onSelect={() => {
+              setDirEditing(false);
+              onChange({ kind: "none" });
+            }}
+          >
             <Boxes className="text-muted-foreground" />
             <span className="flex-1">{t("binding.none")}</span>
-            <DropdownMenuCheck active={value.kind === "none"} />
+            <DropdownMenuCheck active={value.kind === "none" && !dirEditing} />
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
@@ -117,13 +139,14 @@ export function BindingPicker({
           {repos.map((r) => (
             <DropdownMenuItem
               key={r.id}
-              onSelect={() =>
+              onSelect={() => {
+                setDirEditing(false);
                 onChange({
                   kind: "repo",
                   repoId: r.id,
                   baseBranch: r.defaultBranch,
-                })
-              }
+                });
+              }}
             >
               <FolderGit2 className="text-muted-foreground" />
               <span className="flex-1 truncate">{r.name}</span>
@@ -145,8 +168,8 @@ export function BindingPicker({
           </DropdownMenuLabel>
           <DropdownMenuItem
             onSelect={() => {
-              setDirPath(value.kind === "dir" ? value.workDir : "");
-              setDirInput(true);
+              setDirDraft(value.kind === "dir" ? value.workDir : "");
+              setDirEditing(true);
             }}
           >
             <Folder className="text-muted-foreground" />
@@ -155,20 +178,22 @@ export function BindingPicker({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* 绑工作目录的路径输入（浏览 → 调本机选择器回填）*/}
-      {dirInput && (
+      {/* 绑工作目录：路径输入 + 浏览（选完/失焦/回车即提交，无需单独确定）*/}
+      {showDir && (
         <div className="flex flex-col gap-1">
           <div className="flex gap-1.5">
             <input
-              autoFocus
-              value={dirPath}
-              onChange={(e) => setDirPath(e.target.value)}
+              autoFocus={dirEditing}
+              value={dirDraft}
+              onChange={(e) => setDirDraft(e.target.value)}
+              onBlur={() => commitDir()}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && dirPath.trim()) {
-                  onChange({ kind: "dir", workDir: dirPath.trim() });
-                  setDirInput(false);
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitDir();
+                  (e.target as HTMLInputElement).blur();
                 }
-                if (e.key === "Escape") setDirInput(false);
+                if (e.key === "Escape") setDirEditing(false);
               }}
               placeholder={t("binding.dirPh")}
               className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 font-mono text-xs outline-none focus-visible:border-active-fg"
@@ -181,18 +206,6 @@ export function BindingPicker({
             >
               <FolderSearch className="size-4" />
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (dirPath.trim()) {
-                  onChange({ kind: "dir", workDir: dirPath.trim() });
-                  setDirInput(false);
-                }
-              }}
-              className="shrink-0 rounded-lg border border-border px-2.5 text-xs text-foreground hover:bg-sidebar-accent"
-            >
-              {t("binding.confirm")}
-            </button>
           </div>
           {browseErr && (
             <p className="text-[11px] text-muted-foreground">
@@ -202,19 +215,17 @@ export function BindingPicker({
         </div>
       )}
 
-      {/* 仓库模式：基准分支 + 模式提示 */}
+      {/* 仓库模式：基准分支输入 */}
       {value.kind === "repo" && (
         <input
           value={value.baseBranch}
-          onChange={(e) =>
-            onChange({ ...value, baseBranch: e.target.value })
-          }
+          onChange={(e) => onChange({ ...value, baseBranch: e.target.value })}
           placeholder={t("repo.branchPh")}
           className="h-8 w-full rounded-lg border border-border bg-background px-2.5 font-mono text-xs outline-none focus-visible:border-active-fg"
         />
       )}
 
-      {/* 当前模式说明（清晰展示给用户） */}
+      {/* 当前模式说明 */}
       <p className="text-[11px] leading-snug text-muted-foreground">
         {value.kind === "repo"
           ? `${t("binding.worktreeHint")} · ${branch}`
@@ -229,6 +240,7 @@ export function BindingPicker({
         onClose={() => setAddOpen(false)}
         onCreated={(r) => {
           setRepos((prev) => [r, ...prev]);
+          setDirEditing(false);
           onChange({ kind: "repo", repoId: r.id, baseBranch: r.defaultBranch });
         }}
       />

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +54,7 @@ export function CreateRepoDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
       className="zero-overlay fixed inset-0 z-[60] flex items-center justify-center bg-black/20 px-4 backdrop-blur-sm"
       onClick={onClose}
@@ -111,6 +112,7 @@ export function CreateRepoDialog({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -100,7 +100,9 @@ export function CreateIssueDialog({
         ...(binding.kind === "repo"
           ? { repoId: binding.repoId, baseBranch: binding.baseBranch }
           : {}),
-        ...(binding.kind === "dir" ? { workDir: binding.workDir } : {}),
+        ...(binding.kind === "dir" && binding.workDir.trim()
+          ? { workDir: binding.workDir.trim() }
+          : {}),
       });
       onCreated(issue);
       reset();
