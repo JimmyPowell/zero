@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · Phase C 可扩展性：调研 + 方案设计（待确认）📝
+
+- **隔离**：开分支 `feat/agent-skills` / 工作树 `~/code/zero-agent-skills`，调研与设计在树内进行。
+- **调研**（4 路并行）：① 四个底层 CLI（Claude Code/Codex/OpenCode/Gemini）能力矩阵 —— **`SKILL.md` 是跨工具开放标准**（四家通吃，OpenCode/Codex 直读 `.claude/skills`、`.agents/skills`）；② Multica 的 skill（DB+物化）/agent 数据模型/MCP(按 provider 分流)/无插件；③ Multica 短板（版本粗糙、二进制炸、provider 写死 #257、安全裸奔、#1579 可信度）；④ MCP 争议（token 膨胀/投毒/工具混淆 vs 渐进披露/code-execution）。
+- **产出**：`docs/agent-extensibility.md` —— Skill 作能力原语（instructions=人格 / skills=按需能力）、控制层存 + 运行时物化进 worktree（随 issue 清理、git exclude 不污染 PR、派发即快照版本）、库+挂载双层、MCP 带教训接（限域+白名单+成本上台面）、ProviderAdapter 留插件位、智能体详情页+技能库 UI、分阶段 C1–C5。
+- **下一步**：等用户确认方案（§10 开放问题），再按 §9 阶段开发。**本条之前未改任何代码。**
+
 ## 2026-06-19 · 合并运行时管理升级（feat/runtime-management → main）🎉
 
 - 把 `feat/runtime-management`（作用域/可见性 · 成本落库 · 运行时级并发 · 运行时 CRUD+详情）合入 main。迁移 **0010 加性**（新列可空/默认、纯新增表 `runtime_workspace`/`task_usage`），已应用到 dev 库 → `db:migrate` no-op。
