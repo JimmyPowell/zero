@@ -19,6 +19,7 @@ import { join } from "node:path";
 
 const HEARTBEAT_MS = 20_000;
 const CLAIM_MS = 5_000;
+const PICKER_PORT = 8799; // 本地文件夹选择器（仅 127.0.0.1）
 const ZERO_DIR = join(homedir(), ".zero");
 const PID_FILE = join(ZERO_DIR, "daemon.pid");
 const LOG_FILE = join(ZERO_DIR, "daemon.log");
@@ -196,6 +197,56 @@ async function prepareWorkdir(work: WorkSpec, issueId: string): Promise<string> 
     if (!r.ok) throw new Error(`创建 worktree 失败：${r.err || r.out}`);
   }
   return worktreePath;
+}
+
+// ---- 本地文件夹选择器（仅供本机网页调用，弹原生对话框选目录）----
+
+async function pickFolder(): Promise<string | null> {
+  if (process.platform !== "darwin") return null; // 目前仅 macOS
+  const proc = Bun.spawn({
+    cmd: [
+      "osascript",
+      "-e",
+      'POSIX path of (choose folder with prompt "选择工作目录")',
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const out = (await new Response(proc.stdout).text()).trim();
+  const code = await proc.exited;
+  if (code !== 0 || !out) return null; // 用户取消
+  return out.replace(/\/$/, ""); // 去掉尾部斜杠
+}
+
+function startPicker() {
+  const cors: Record<string, string> = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+  };
+  try {
+    Bun.serve({
+      port: PICKER_PORT,
+      hostname: "127.0.0.1",
+      idleTimeout: 255, // 选目录可能停留较久
+      async fetch(req) {
+        if (req.method === "OPTIONS")
+          return new Response(null, { headers: cors });
+        const url = new URL(req.url);
+        if (url.pathname === "/pick-folder") {
+          const path = await pickFolder();
+          return Response.json({ path }, { headers: cors });
+        }
+        return new Response("zero-daemon picker", { headers: cors });
+      },
+    });
+    console.log(`本地选择器：http://127.0.0.1:${PICKER_PORT}`);
+  } catch (err) {
+    console.error(
+      `选择器启动失败（手动输入路径仍可用）：${(err as Error).message}`,
+    );
+  }
 }
 
 // 把服务端装配好的上下文拼成给 agent 的 prompt
@@ -382,6 +433,8 @@ async function worker() {
     process.exit(1);
   }
   console.log(`已连接：${info.name}（runtime ${info.runtimeId}）`);
+
+  startPicker(); // 本地文件夹选择器
 
   const hb = setInterval(async () => {
     try {

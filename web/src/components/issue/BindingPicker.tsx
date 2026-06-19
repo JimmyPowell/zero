@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { FolderGit2, Folder, Plus, ChevronDown, Boxes } from "lucide-react";
+import {
+  FolderGit2,
+  Folder,
+  FolderSearch,
+  Plus,
+  ChevronDown,
+  Boxes,
+} from "lucide-react";
 
 import {
   DropdownMenu,
@@ -41,6 +48,21 @@ export function BindingPicker({
   const [addOpen, setAddOpen] = useState(false);
   const [dirInput, setDirInput] = useState(false);
   const [dirPath, setDirPath] = useState("");
+  const [browseErr, setBrowseErr] = useState(false);
+
+  // 调本机 daemon 的本地选择器，弹原生文件夹对话框回填绝对路径
+  async function browseFolder() {
+    setBrowseErr(false);
+    try {
+      const res = await fetch("http://127.0.0.1:8799/pick-folder", {
+        signal: AbortSignal.timeout(180000),
+      });
+      const data = (await res.json()) as { path: string | null };
+      if (data.path) setDirPath(data.path);
+    } catch {
+      setBrowseErr(true);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -133,35 +155,50 @@ export function BindingPicker({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* 绑工作目录的路径输入 */}
+      {/* 绑工作目录的路径输入（浏览 → 调本机选择器回填）*/}
       {dirInput && (
-        <div className="flex gap-1.5">
-          <input
-            autoFocus
-            value={dirPath}
-            onChange={(e) => setDirPath(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && dirPath.trim()) {
-                onChange({ kind: "dir", workDir: dirPath.trim() });
-                setDirInput(false);
-              }
-              if (e.key === "Escape") setDirInput(false);
-            }}
-            placeholder={t("binding.dirPh")}
-            className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 font-mono text-xs outline-none focus-visible:border-active-fg"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              if (dirPath.trim()) {
-                onChange({ kind: "dir", workDir: dirPath.trim() });
-                setDirInput(false);
-              }
-            }}
-            className="shrink-0 rounded-lg border border-border px-2.5 text-xs text-foreground hover:bg-sidebar-accent"
-          >
-            {t("binding.confirm")}
-          </button>
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-1.5">
+            <input
+              autoFocus
+              value={dirPath}
+              onChange={(e) => setDirPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dirPath.trim()) {
+                  onChange({ kind: "dir", workDir: dirPath.trim() });
+                  setDirInput(false);
+                }
+                if (e.key === "Escape") setDirInput(false);
+              }}
+              placeholder={t("binding.dirPh")}
+              className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 font-mono text-xs outline-none focus-visible:border-active-fg"
+            />
+            <button
+              type="button"
+              title={t("binding.browse")}
+              onClick={browseFolder}
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            >
+              <FolderSearch className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (dirPath.trim()) {
+                  onChange({ kind: "dir", workDir: dirPath.trim() });
+                  setDirInput(false);
+                }
+              }}
+              className="shrink-0 rounded-lg border border-border px-2.5 text-xs text-foreground hover:bg-sidebar-accent"
+            >
+              {t("binding.confirm")}
+            </button>
+          </div>
+          {browseErr && (
+            <p className="text-[11px] text-muted-foreground">
+              {t("binding.browseErr")}
+            </p>
+          )}
         </div>
       )}
 
