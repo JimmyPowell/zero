@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+
+@import './theme.css';
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    /* 整体底色接近纯白，与白色工作区柔和过渡（参考 skillstest） */
+    background-color: var(--sidebar);
+    color: var(--foreground);
+    font-family:
+      'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+      'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* 下拉/弹出层动画：柔和淡入 + 轻微缩放上移（参考 multica 的丝滑过渡） */
+@keyframes zero-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes zero-pop-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+
+.zero-popover[data-state='open'] {
+  animation: zero-pop-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.zero-popover[data-state='closed'] {
+  animation: zero-pop-out 0.12s ease;
+}
