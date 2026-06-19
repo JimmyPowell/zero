@@ -227,6 +227,7 @@ export interface RunEventRow {
   tool: RunEventTool | null;
   toolName: string | null;
   text: string | null;
+  detail?: string | null;
   payload?: unknown;
   createdAt?: string;
 }
