@@ -14,6 +14,7 @@ import { IssueDetailView } from "@/views/IssueDetailView";
 import { AgentsView } from "@/views/AgentsView";
 import { RuntimesView } from "@/views/RuntimesView";
 import { RuntimeDetailView } from "@/views/RuntimeDetailView";
+import { SettingsView } from "@/views/SettingsView";
 import { PlaceholderView } from "@/views/PlaceholderView";
 import { AuthView } from "@/views/AuthView";
 import { useAuth, restoreAuth } from "@/lib/auth-store";
@@ -64,6 +65,7 @@ const router = createBrowserRouter([
       { path: "runtime", element: <RuntimesView /> },
       { path: "runtime/:id", element: <RuntimeDetailView /> },
       { path: "agents", element: <AgentsView /> },
+      { path: "settings", element: <SettingsView /> },
       { path: "*", element: <Navigate to="/overview" replace /> },
     ],
   },

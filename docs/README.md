@@ -6,6 +6,7 @@ Zero 是一个自研的「人 + AI 智能体协作」平台 —— 把编码 Age
 
 - [design.md](./design.md) —— 设计理念、对标 Multica 的改进点、当前数据模型
 - [phase-b-execution.md](./phase-b-execution.md) —— Phase B：Agent 执行体系（派发流程 / Runtime / Worktree）的方案
+- [notifications.md](./notifications.md) —— 通知 / 推送系统（对外渠道 + 双向回控 + 移动端结论）的设计与路线图
 - [progress.md](./progress.md) —— 进展日志（每完成一块开发就在此追加）
 
 > 约定：**每次完成开发或有重要进展，都要更新 [progress.md](./progress.md)，涉及设计变更的同步更新对应文档。**

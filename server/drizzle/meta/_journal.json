@@ -85,6 +85,13 @@
       "when": 1781869310771,
       "tag": "0011_run_event_detail",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1781864555187,
+      "tag": "0012_closed_groot",
+      "breakpoints": true
     }
   ]
 }

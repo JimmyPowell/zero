@@ -9,6 +9,7 @@ import { hashToken } from "@/lib/token";
 import { assembleContext } from "@/lib/dispatch";
 import { incomingRunEventSchema } from "@/lib/run-events";
 import { publish } from "@/lib/run-bus";
+import { notifyIssueEvent } from "@/lib/notify";
 
 // daemon 用运行时令牌认证：Authorization: Bearer <token>
 type DaemonEnv = {
@@ -350,8 +351,9 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           body: summary.trim(),
         });
       }
+      const finishedEventId = crypto.randomUUID();
       await db.insert(schema.issueEvent).values({
-        id: crypto.randomUUID(),
+        id: finishedEventId,
         issueId: tk.issueId,
         workspaceId: tk.workspaceId,
         actorType: "agent",
@@ -412,6 +414,12 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         );
       // 通知订阅中的 SSE 立即收尾（否则要等心跳轮询才发现终态）
       publish(id, { __end: true, status: "succeeded" });
+      // 通知：智能体执行完成（fire-and-forget）
+      void notifyIssueEvent({
+        kind: "run_finished",
+        issueId: tk.issueId,
+        eventId: finishedEventId,
+      });
       return c.json({ ok: true });
     },
   )

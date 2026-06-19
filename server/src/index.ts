@@ -10,6 +10,10 @@ import { repoRoutes } from "@/routes/repos";
 import { agentRoutes } from "@/routes/agents";
 import { runtimeRoutes } from "@/routes/runtimes";
 import { daemonRoutes } from "@/routes/daemon";
+import { channelRoutes } from "@/routes/channels";
+import { startOutboxWorker } from "@/lib/outbox";
+import { startWecomBot } from "@/lib/channels/wecom-bot";
+import { startTelegramBot } from "@/lib/channels/telegram-bot";
 
 const app = new Hono();
 
@@ -31,7 +35,15 @@ app.route("/workspaces/:wsId/issues", issueRoutes);
 app.route("/workspaces/:wsId/repos", repoRoutes);
 app.route("/workspaces/:wsId/agents", agentRoutes);
 app.route("/workspaces/:wsId/runtimes", runtimeRoutes);
+app.route("/workspaces/:wsId/channels", channelRoutes);
 app.route("/daemon", daemonRoutes);
+
+// 通知发件箱后台投递
+startOutboxWorker();
+// 企业微信智能机器人长连接（配置了 Bot ID/Secret 才启动）
+startWecomBot();
+// Telegram bot 长轮询（配置了 token 才启动）
+startTelegramBot();
 
 console.log(`Zero server listening on http://localhost:${config.port}`);
 

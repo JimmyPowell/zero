@@ -367,6 +367,29 @@ export interface CreateRepoPayload {
   defaultBranch?: string;
 }
 
+// ---- 通知渠道 ----
+export type ChannelKind = "email" | "telegram" | "wecom" | "feishu" | "webpush";
+
+export interface ChannelBinding {
+  id: string;
+  kind: ChannelKind;
+  // email: {address}；wecom: {target}；telegram: {chatId}（均经绑定码/填值关联）
+  config: { address?: string; target?: string; chatId?: string } & Record<
+    string,
+    unknown
+  >;
+  enabled: boolean;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+// 仅 email 走 upsert；wecom 走绑定码流程（createWecomLinkCode）
+export interface UpsertChannelPayload {
+  kind: "email";
+  address: string;
+  enabled?: boolean;
+}
+
 interface AuthResponse {
   token: string;
   user: AuthUser;
@@ -538,5 +561,36 @@ export const api = {
     request<{ ok: boolean; deleted: boolean }>(
       `/workspaces/${workspaceId}/runtimes/${id}`,
       { method: "DELETE" },
+    ),
+
+  // ---- 通知渠道 ----
+  listChannels: (workspaceId: string) =>
+    request<{ channels: ChannelBinding[] }>(
+      `/workspaces/${workspaceId}/channels`,
+    ),
+
+  upsertChannel: (workspaceId: string, payload: UpsertChannelPayload) =>
+    request<{ channel: ChannelBinding }>(
+      `/workspaces/${workspaceId}/channels`,
+      { method: "POST", body: payload },
+    ),
+
+  deleteChannel: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/channels/${id}`, {
+      method: "DELETE",
+    }),
+
+  // 生成企业微信绑定码（发给智能机器人完成关联）
+  createWecomLinkCode: (workspaceId: string) =>
+    request<{ code: string }>(
+      `/workspaces/${workspaceId}/channels/wecom/link-code`,
+      { method: "POST", body: {} },
+    ),
+
+  // 生成 Telegram 绑定码（发给 bot 完成关联）
+  createTelegramLinkCode: (workspaceId: string) =>
+    request<{ code: string }>(
+      `/workspaces/${workspaceId}/channels/telegram/link-code`,
+      { method: "POST", body: {} },
     ),
 };

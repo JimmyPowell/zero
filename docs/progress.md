@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 合并外部通知 + 设置页 + Telegram 回控（feat/notifications → main）🎉
+
+- 把 `feat/notifications`（邮件/企微/Telegram 三渠道出站 + 设置页自助绑定 + 事件→`notification_outbox`→渠道 adapter 可靠投递 + Telegram 双向回控 C1/C2）合入 main。分支基于很早的 `8a0ab40`，跨度大。
+- **迁移撞号（双 0010）**：分支 `0010_ambitious_vermin`(通知表 `channel_binding`/`notification_outbox`) 与 main `0010`(runtime)+`0011`(detail) 同号不同物。保留 main 的 0010/0011，通知表重生成为 **0012**（dev 库已应用过，journal `when` 对齐 `1781864555187` → `db:migrate` no-op，不重建表）。
+- **冲突处理**：`schema.ts`(taskUsage 与通知表并存)、`api-client.ts`(留 main 的 `deleteRuntime{deleted}` + 并入渠道方法)、`ui-store.ts`(runtime/成本 i18n 与通知 i18n 并存，保住 `noCostHint`)、`main.tsx`(RuntimeDetailView + SettingsView 路由并存)；`issues.ts`/`daemon.ts` 的 `notifyIssueEvent` hook 已干净 auto-merge。
+- **凭据**：渠道密钥只在分支 worktree `.env`（不入库）；合并后 main 的 `.env` 无凭据 → 通知发送需自配后才生效（`.env.example` 已带样例键）。
+- **校验**：server/web typecheck + web build；`db:migrate` no-op。
+
 ## 2026-06-19 · 成本来源说明 + codex「无金额」标注 + 单价表待办
 
 - **三家成本来源**：claude=`total_cost_usd`（权威）、opencode=`step_finish.part.cost`（权威，逐 step 累加）—— 都是 provider 自报的真实金额；**codex 走 ChatGPT 订阅，CLI 只给 token、不给单价/金额** → `cost_usd` 留 `null`（不是 0，是"金额未知"）。
@@ -72,6 +80,69 @@
   - daemon `buildPrompt(claim,{full})`：resume 尝试 `full=false` 只渲染 `comments.slice(resumeFromIndex)`（标题"New comments since your last turn"+"N earlier…"提示）；**新会话首跑 / resume 失败回退** `full=true` 渲染全量（避免新会话失忆）。
   - `buildPrompt` 导出 + 入口加 `import.meta.main` 守卫（可被单测 import 而不启动 daemon）。
 - **验证**：server/daemon typecheck 全过；`buildPrompt` 单测（增量/全量/首跑三态断言通过）；`resumeFromIndex` 对真实 #11 数据正确（fresh=0、resume=2）；**真机 resume 端到端**：让 agent 复述上一条回复，返回 `merge-stream-ok`（上一轮产物）—— 证明只推增量也不丢连续性（记忆在会话里）。
+## 2026-06-19 · 通知阶段收尾（暂告一段落）
+
+- 现状：外部通知三渠道（邮件 / 企业微信智能机器人 / Telegram）真机验证通过 + 设置页自助绑定；Telegram 双向回控 C1+C2 完成（聊天里建/选/评论/改状态/优先级/指派/搜索/切空间）。**满足当前需求，通知阶段暂停**。
+- **暂缓（按需再启）**：C3 富交互（按钮选择器 / 原地更新卡片 / 危险操作确认 / 回复绑定持久化）；企微接同一 router 做回控；N4 飞书；N5 移动端（RN/Expo）。C3/C2 的方案与能力清单已存 [notifications.md §十]。
+- 全部在分支 `feat/notifications`（worktree `~/code/zero-notifications`），main 未动；凭据仅在该 worktree `.env`（不入库）。**待定**：是否合并回 main。
+
+## 2026-06-19 · C2 Telegram 命令全集
+
+- **共享动作层补全** `issue-actions.ts`：`createIssue`（建+created 事件+派发+通知）、`searchIssues`、`setIssuePriority`、`assignIssue`（member/agent，agent 非 backlog 则派发）、`listAgents`/`findAgentByName`、`listWorkspacesForUser`/`isWorkspaceMember`、`getUserName`；优先级常量/标签。
+- **聊天核心** `chat/core.ts`：新命令 `/new`（一行式 + **引导式** 标题→描述，`/cancel` 取消，会话 `flow` 状态）、`/comment`、`/status`、`/priority`、`/assign`、`/search`、`/ws`（按钮切空间，校验成员）；状态/优先级支持中英别名（完成/评审/高/中…）；`pickIssue` 解析「[ZERO-N] 其余」——带号用号、不带用活动 issue。
+- **Telegram**：命令菜单补全 11 项。
+- **验证**：server typecheck 通过；脚本驱动 12 项全过 —— /new(一行式+DB)、/status 评审、/priority 高、/comment、/assign me、/search 命中、引导式 /new(标题→描述跳过→建)、/cancel、/ws；用独立 chatId 测试避免触发真机推送，含建后清理。
+- 下一步 C3 富交互（按钮选择器/原地更新卡片/确认）+ 企微接同一 router。
+
+## 2026-06-19 · C1 Telegram 双向回控（基础闭环）
+
+- **方案定稿**：双向回控（聊天指挥）完整方案 + 能力清单 + 分期 C1/C2/C3 写入 [notifications.md §十]。Telegram 先行。
+- **共享动作层** `lib/issue-actions.ts`（findIssueByNumber/listIssuesFor/getIssueBrief/addIssueComment/setIssueStatus）—— HTTP 与聊天共用一份逻辑。
+- **聊天核心** `lib/chat/core.ts`（平台无关）：每 chat 会话状态（当前 ws/活动 issue，内存）+ 从绑定恢复用户 + 命令/回复/活动态打字/按钮 → 统一 `ChatReply{text,buttons}`。
+- **Telegram 适配**：`telegram-bot.ts` 长轮询接 message + callback_query；命令 `/issues`（按钮列表）`/use`（选中+状态按钮）`/show` `/help` + `setMyCommands` 菜单；活动态打字即评论；**回复通知即评论**（内存 `msgId↔issueId`）；通知卡片附「✅完成/🔍评审」状态按钮（outbox 传 issueId）。
+- **验证**：server typecheck 通过；脚本驱动逐项实测——/issues 出 8 行按钮、/use 选中、活动态打字→评论入库、回复绑定→评论、按钮改状态 in_review→in_progress（含 DB 副作用 + 清理还原）全过。
+- 范围：C1 不含 /new、/comment、/status 文本命令、富交互（C2/C3）。下一步 C2 命令全集。
+
+## 2026-06-19 · N3 Telegram 渠道（真机验证通过）
+
+- **网络现实**：本机直连 `api.telegram.org` 不可达（探测 HTTP 000，国内常态）。故代码全程预留 `TELEGRAM_PROXY`（Bun fetch `proxy` 选项）；本地真测需走代理，或在可出网节点跑。
+- **后端**：`lib/channels/telegram-bot.ts`（长轮询 `getUpdates` 收消息 + 绑定码兑换写 `config={chatId}` + `sendTelegramMessage` 出站 HTML，全部 proxy-aware）；`outbox` 加 telegram 分支；`notify` `SUPPORTED_CHANNELS` 加 telegram；`index` `startTelegramBot()`；config 加 `TELEGRAM_BOT_TOKEN/PROXY`；channels 加 `POST /channels/telegram/link-code`。**schema 无变更**（kind 枚举早含 telegram，免迁移）。
+- **前端**：把 `WecomCard` 泛化为通用 `LinkCodeCard`（企微/Telegram 共用：生成码 + 复制 + 轮询自动显示已绑定 + 解绑），设置页加 Telegram 卡片；api-client + i18n 同步。
+- **验证**：server typecheck + web `vite build` 通过；启动实测 telegram 无 token 正确跳过、不影响 wecom/outbox。
+- **真机验证通过**（bot `@zerosdhdjdbot`，本机走代理 `http://127.0.0.1:7890`）：① Bun fetch 经代理 `getMe` 成功、token 有效；② 长轮询启动无报错；③ 绑定码 `ZERO-ISUQGQ` 发给 bot → 收到回复、写入 `config={chatId:7529520645}`；④ `run_finished → outbox → 服务端 worker 经代理 sendMessage → status sent`，真实到达 Telegram。凭据存 worktree `.env`（不入库）。
+- 绑定方式同企微——一次性绑定码（也支持 `/start <码>` 深链）。范围同企微：先只做主动推送，双向回控后续。
+
+## 2026-06-19 · N2 重做：企业微信「智能机器人」（SDK 长连接，双向+主动推送）
+
+- **关键修正**：用户的机器人是企业微信**新版「智能机器人」**（Bot ID + Secret，长连接/URL回调），**不是**旧版群机器人 webhook。智能机器人**本身双向**、且支持**主动推送**（`aibot_send_msg`），长连接出站、**免公网回调**。之前「企业微信只能单向」的判断仅适用于旧群机器人。
+- **实测验证（用户真机器人）**：官方 `@wecom/aibot-node-sdk` 在 Bun 跑通 —— ① 连接认证成功；② 双向：用户发「1122」→ 机器人回复，抓到 userid `T60110050A`；③ 主动推送 errcode 0；④ 接入 Zero 管线后，`run_finished → outbox → 服务端 worker 经 live bot sendMessage → status sent` 真实到达。
+- **重做内容**：删旧 `wecom.ts`(webhook)；新 `lib/channels/wecom-bot.ts`（`WSClient` 常驻：开机连、心跳/重连、`sendWecomMessage` 主动推送、收消息回调做**绑定码兑换**）；`outbox` wecom 分支改调 `sendWecomMessage(target)`；`index` 开机 `startWecomBot()`；config 加 `WECOM_BOT_ID/SECRET`（.env，不入库）。
+- **绑定方式**（按用户定）：**一次性绑定码** —— 设置页 `POST /channels/wecom/link-code` 拿码（实测返回 `ZERO-XXXX`），用户在企微把码发给机器人 → 回调里核对 → 写 `channel_binding(kind=wecom, config={target})`。前端 `SettingsView` 加 `WecomCard`（生成码 + 复制 + 轮询自动显示已绑定 + 解绑）。
+- **范围**（按用户定）：本档**只做主动推送**；双向回控（按钮卡片/命令）下一步。
+- 依赖：`@wecom/aibot-node-sdk@1.0.7`。
+
+## 2026-06-19 · N2 企业微信群机器人渠道
+
+- **后端**：`lib/channels/wecom.ts`（群机器人 incoming webhook，POST markdown，解析 `errcode`）；outbox `deliver` 加 `wecom` 分支；`notify` 收件人渠道查询从「仅 email」泛化为「所有已实现 adapter 的渠道」（`SUPPORTED_CHANNELS=[email,wecom]`，一绑定一 outbox 行、内容渠道无关）；`channels` 路由 upsert 改判别联合（email 要 address / wecom 要 webhookUrl）。
+- **前端**：`SettingsView` 抽出通用 `ChannelCard`（邮件 / 企业微信共用），通知 section 下两张卡片；api-client `UpsertChannelPayload` 改联合 + 类型；i18n 补 `settings.wecom*`。
+- **验证**：server typecheck + web `tsc -b`/`vite build` 通过；本地 mock 企业微信端点实测 `created → 入队 wecom 行 → 投递 sent → mock 收到正确 markdown`；渠道 CRUD 联合校验仍 OK。
+- **待真实验证**：需用户在企业微信群加「群机器人」拿到 webhook 地址（填到设置页或我配），即可真实推送。
+- 下一步：N3 Telegram（出站 + 入站双向回控）。
+
+## 2026-06-19 · 通知设置前端页（自助开关邮件通知）
+
+- 新增**「设置」**入口（左侧栏底部，齿轮图标，独立于主菜单）+ `SettingsView`：通知 section 下「邮件」渠道卡片 —— 开关 + 邮箱输入（默认填账号邮箱）+ 保存 + 移除，状态「已开启 · 将发往 xxx」；底部留「更多渠道即将上线」。
+- `api-client` 加 `listChannels/upsertChannel/deleteChannel` + 类型；i18n（zh/en）补 settings.* / menu.settings；路由 `/settings`。
+- **验证**：web `tsc -b` + `vite build` 通过；起服务实测 `/channels` 路由 CRUD（建/同 kind 覆盖改址停用/非法邮箱 400/删/列空）全部正确——即设置页所用路径。
+- 下一步：N2 企业微信群机器人。
+
+## 2026-06-19 · 通知系统调研 + N1 启动（feat/notifications，worktree）
+
+- **调研定稿**：对标 Multica 通知能力——它只有站内收件箱 + WebSocket，**对外推送一片空白**（无邮件事件通知 / Telegram / 企业微信 / 飞书 / 移动推送 / 对外 webhook）。Zero 的差异化 = 出墙 + 回控。设计写入 [notifications.md](./notifications.md)。
+- **澄清移动端**：PWA ≠ 客户端（仍是网页引擎渲染网页）；现有 React 不能直接变 RN（逻辑可复用、UI 全重写）；要做原生客户端推荐 **RN + Expo**（同 TS 栈、三端共享类型）。移动端排到最后一档、本阶段不定死。
+- **方向决定**：渠道顺序 **邮件 → 企业微信 → Telegram → 飞书 →（最后）RN App**；先点亮两个通知点 **`created`** + **`run_finished`**；全程预留双向（回控从 Telegram 档起）。
+- **N1 完成并实测**（独立分支 `feat/notifications` + sibling worktree `~/code/zero-notifications`，不碰 main）：通知骨架（`notifyIssueEvent` + `notification_outbox` + worker 退避重试）+ 邮件 adapter（SMTP/nodemailer，未配凭据时 dev 回退打印）+ 渠道绑定 API。迁移 0010 加 `channel_binding` / `notification_outbox` 两表。
+- **真实发信已验证**：配 QQ 邮箱 SMTP（`smtp.qq.com:465`，凭据只在 worktree `server/.env`、gitignore 不入库）→ 触发 `created` + `run_finished` 两个通知点 → 经 outbox 真实发出两封邮件、状态 `sent`，收件箱确认到达。
 
 ## 2026-06-19 · DB 连接钉死 UTC（`timezone=Z`，部署无关）
 
