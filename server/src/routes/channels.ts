@@ -10,6 +10,7 @@ import {
   type WorkspaceEnv,
 } from "@/middleware/workspace";
 import { createWecomLinkCode } from "@/lib/channels/wecom-bot";
+import { createTelegramLinkCode } from "@/lib/channels/telegram-bot";
 
 // 渠道绑定：管理「我」在本工作空间的通知渠道。
 // - email：直接填邮箱（upsert）。
@@ -112,6 +113,13 @@ export const channelRoutes = new Hono<WorkspaceEnv>()
     const workspaceId = c.get("workspaceId");
     const { sub } = c.get("user");
     const code = createWecomLinkCode(workspaceId, sub);
+    return c.json({ code });
+  })
+  // 生成 Telegram「绑定码」：把它发给 bot（或 /start <码>）即完成关联
+  .post("/telegram/link-code", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const code = createTelegramLinkCode(workspaceId, sub);
     return c.json({ code });
   })
   // 删除我的某条渠道绑定

@@ -22,4 +22,10 @@ export const config = {
     botId: process.env.WECOM_BOT_ID ?? "",
     secret: process.env.WECOM_BOT_SECRET ?? "",
   },
+  // Telegram bot。token 来自 @BotFather；proxy 给国内本机直连不了 Telegram 时走代理
+  // （如 http://127.0.0.1:7890）。未配置 token 则不启动。
+  telegram: {
+    token: process.env.TELEGRAM_BOT_TOKEN ?? "",
+    proxy: process.env.TELEGRAM_PROXY ?? "",
+  },
 };

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Mail,
   MessageSquare,
+  Send,
   Bell,
   Trash2,
   Copy,
@@ -204,13 +205,27 @@ function ChannelCard({
   );
 }
 
-// 企业微信智能机器人：绑定走「绑定码」（不是填 URL）
-function WecomCard({
+// 绑定码型渠道卡片（企业微信 / Telegram 共用）：生成码 → 用户发给 bot → 自动绑定
+function LinkCodeCard({
   wsId,
+  icon: Icon,
+  label,
+  desc,
+  boundText,
+  codeHint,
+  unbindConfirm,
+  genCode,
   binding,
   onChanged,
 }: {
   wsId: string | null;
+  icon: LucideIcon;
+  label: string;
+  desc: string;
+  boundText: string;
+  codeHint: string;
+  unbindConfirm: string;
+  genCode: (wsId: string) => Promise<string>;
   binding: ChannelBinding | null;
   onChanged: () => void;
 }) {
@@ -235,8 +250,7 @@ function WecomCard({
     if (!wsId || generating) return;
     setGenerating(true);
     try {
-      const r = await api.createWecomLinkCode(wsId);
-      setCode(r.code);
+      setCode(await genCode(wsId));
     } finally {
       setGenerating(false);
     }
@@ -244,7 +258,7 @@ function WecomCard({
 
   async function unbind() {
     if (!wsId || !binding) return;
-    if (!window.confirm(t("settings.wecomUnbindConfirm"))) return;
+    if (!window.confirm(unbindConfirm)) return;
     await api.deleteChannel(wsId, binding.id);
     onChanged();
   }
@@ -253,12 +267,12 @@ function WecomCard({
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 flex size-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#2563eb]/10 text-[#2563eb]">
-          <MessageSquare className="size-[18px]" />
+          <Icon className="size-[18px]" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-medium text-foreground">
-              {t("settings.wecom")}
+              {label}
               <span
                 className={cn(
                   "ml-2 rounded-full px-2 py-0.5 text-[11px] font-normal",
@@ -274,26 +288,20 @@ function WecomCard({
               <button
                 type="button"
                 onClick={unbind}
-                title={t("settings.wecomUnbind")}
+                title={t("settings.unbind")}
                 className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="size-4" />
               </button>
             )}
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("settings.wecomDesc")}
-          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
 
           {active ? (
-            <p className="mt-3 text-xs text-emerald-600">
-              {t("settings.wecomBound")}
-            </p>
+            <p className="mt-3 text-xs text-emerald-600">{boundText}</p>
           ) : code ? (
             <div className="mt-3">
-              <p className="text-xs text-muted-foreground">
-                {t("settings.wecomCodeHint")}
-              </p>
+              <p className="text-xs text-muted-foreground">{codeHint}</p>
               <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
                 <code className="flex-1 font-mono text-sm font-semibold text-foreground">
                   {code}
@@ -323,9 +331,7 @@ function WecomCard({
                 disabled={generating}
                 className="bg-[#2563eb] text-white hover:bg-[#2563eb]/90"
               >
-                {generating
-                  ? t("settings.wecomGenerating")
-                  : t("settings.wecomGenCode")}
+                {generating ? t("settings.generating") : t("settings.genCode")}
               </Button>
             </div>
           )}
@@ -366,6 +372,7 @@ export function SettingsView() {
 
   const emailBinding = channels.find((c) => c.kind === "email") ?? null;
   const wecomBinding = channels.find((c) => c.kind === "wecom") ?? null;
+  const telegramBinding = channels.find((c) => c.kind === "telegram") ?? null;
 
   return (
     <Panel>
@@ -411,7 +418,32 @@ export function SettingsView() {
               }
               onChanged={load}
             />
-            <WecomCard wsId={wsId} binding={wecomBinding} onChanged={load} />
+            <LinkCodeCard
+              wsId={wsId}
+              icon={MessageSquare}
+              label={t("settings.wecom")}
+              desc={t("settings.wecomDesc")}
+              boundText={t("settings.wecomBound")}
+              codeHint={t("settings.wecomCodeHint")}
+              unbindConfirm={t("settings.wecomUnbindConfirm")}
+              genCode={(id) => api.createWecomLinkCode(id).then((r) => r.code)}
+              binding={wecomBinding}
+              onChanged={load}
+            />
+            <LinkCodeCard
+              wsId={wsId}
+              icon={Send}
+              label={t("settings.telegram")}
+              desc={t("settings.telegramDesc")}
+              boundText={t("settings.telegramBound")}
+              codeHint={t("settings.telegramCodeHint")}
+              unbindConfirm={t("settings.telegramUnbindConfirm")}
+              genCode={(id) =>
+                api.createTelegramLinkCode(id).then((r) => r.code)
+              }
+              binding={telegramBinding}
+              onChanged={load}
+            />
           </div>
         )}
 

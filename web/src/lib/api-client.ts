@@ -301,8 +301,11 @@ export type ChannelKind = "email" | "telegram" | "wecom" | "feishu" | "webpush";
 export interface ChannelBinding {
   id: string;
   kind: ChannelKind;
-  // email: {address}；wecom: {target}（企微 userid/chatid，经绑定码关联）
-  config: { address?: string; target?: string } & Record<string, unknown>;
+  // email: {address}；wecom: {target}；telegram: {chatId}（均经绑定码/填值关联）
+  config: { address?: string; target?: string; chatId?: string } & Record<
+    string,
+    unknown
+  >;
   enabled: boolean;
   verifiedAt: string | null;
   createdAt: string;
@@ -488,6 +491,13 @@ export const api = {
   createWecomLinkCode: (workspaceId: string) =>
     request<{ code: string }>(
       `/workspaces/${workspaceId}/channels/wecom/link-code`,
+      { method: "POST", body: {} },
+    ),
+
+  // 生成 Telegram 绑定码（发给 bot 完成关联）
+  createTelegramLinkCode: (workspaceId: string) =>
+    request<{ code: string }>(
+      `/workspaces/${workspaceId}/channels/telegram/link-code`,
       { method: "POST", body: {} },
     ),
 };

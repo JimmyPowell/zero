@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · N3 Telegram 渠道（代码已建，待 token + 代理真测）
+
+- **网络现实**：本机直连 `api.telegram.org` 不可达（探测 HTTP 000，国内常态）。故代码全程预留 `TELEGRAM_PROXY`（Bun fetch `proxy` 选项）；本地真测需走代理，或在可出网节点跑。
+- **后端**：`lib/channels/telegram-bot.ts`（长轮询 `getUpdates` 收消息 + 绑定码兑换写 `config={chatId}` + `sendTelegramMessage` 出站 HTML，全部 proxy-aware）；`outbox` 加 telegram 分支；`notify` `SUPPORTED_CHANNELS` 加 telegram；`index` `startTelegramBot()`；config 加 `TELEGRAM_BOT_TOKEN/PROXY`；channels 加 `POST /channels/telegram/link-code`。**schema 无变更**（kind 枚举早含 telegram，免迁移）。
+- **前端**：把 `WecomCard` 泛化为通用 `LinkCodeCard`（企微/Telegram 共用：生成码 + 复制 + 轮询自动显示已绑定 + 解绑），设置页加 Telegram 卡片；api-client + i18n 同步。
+- **验证**：server typecheck + web `vite build` 通过；启动实测 telegram 无 token 正确跳过、不影响 wecom/outbox。
+- **待办（需用户）**：给 Bot token（@BotFather）+ 本机代理地址（或换可出网节点）后做真测：连通 / 绑定码 / 推送。绑定方式同企微——一次性绑定码（也支持 `/start <码>` 深链）。范围同企微：先只做主动推送，双向回控后续。
+
 ## 2026-06-19 · N2 重做：企业微信「智能机器人」（SDK 长连接，双向+主动推送）
 
 - **关键修正**：用户的机器人是企业微信**新版「智能机器人」**（Bot ID + Secret，长连接/URL回调），**不是**旧版群机器人 webhook。智能机器人**本身双向**、且支持**主动推送**（`aibot_send_msg`），长连接出站、**免公网回调**。之前「企业微信只能单向」的判断仅适用于旧群机器人。

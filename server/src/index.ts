@@ -13,6 +13,7 @@ import { daemonRoutes } from "@/routes/daemon";
 import { channelRoutes } from "@/routes/channels";
 import { startOutboxWorker } from "@/lib/outbox";
 import { startWecomBot } from "@/lib/channels/wecom-bot";
+import { startTelegramBot } from "@/lib/channels/telegram-bot";
 
 const app = new Hono();
 
@@ -41,6 +42,8 @@ app.route("/daemon", daemonRoutes);
 startOutboxWorker();
 // 企业微信智能机器人长连接（配置了 Bot ID/Secret 才启动）
 startWecomBot();
+// Telegram bot 长轮询（配置了 token 才启动）
+startTelegramBot();
 
 console.log(`Zero server listening on http://localhost:${config.port}`);
 

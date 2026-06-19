@@ -4,7 +4,7 @@ import { db, schema } from "@/db";
 import { config } from "@/config";
 
 // 已实现 adapter 的渠道（outbox worker 能投递的）。新增渠道在此登记。
-const SUPPORTED_CHANNELS = ["email", "wecom"] as const;
+const SUPPORTED_CHANNELS = ["email", "wecom", "telegram"] as const;
 
 // 通知分发入口：某 issue 事件发生后调用，解析收件人 → 渲染 → 落 notification_outbox。
 // 设计为 fire-and-forget：调用方不 await、不让它影响主请求；内部自吞异常绝不抛出。
