@@ -13,11 +13,19 @@ import {
 // 渠道绑定：管理「我」在本工作空间的通知渠道。N1 仅 email。
 // 后续渠道（telegram/wecom/feishu/webpush）在此扩 kind + config 校验。
 
-const upsertSchema = z.object({
-  kind: z.literal("email"), // N1 只接受 email
-  address: z.string().trim().email("邮箱格式不正确"),
-  enabled: z.boolean().optional(),
-});
+// 按 kind 区分配置：email 要 address，wecom 要 webhookUrl
+const upsertSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("email"),
+    address: z.string().trim().email("邮箱格式不正确"),
+    enabled: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("wecom"),
+    webhookUrl: z.string().trim().url("Webhook 地址不正确"),
+    enabled: z.boolean().optional(),
+  }),
+]);
 
 function shape(b: schema.ChannelBinding) {
   return {
@@ -53,7 +61,12 @@ export const channelRoutes = new Hono<WorkspaceEnv>()
   .post("/", zValidator("json", upsertSchema), async (c) => {
     const workspaceId = c.get("workspaceId");
     const { sub } = c.get("user");
-    const { kind, address, enabled } = c.req.valid("json");
+    const body = c.req.valid("json");
+    const { kind, enabled } = body;
+    const config =
+      body.kind === "email"
+        ? { address: body.address }
+        : { webhookUrl: body.webhookUrl };
 
     const [existing] = await db
       .select({ id: schema.channelBinding.id })
@@ -71,9 +84,9 @@ export const channelRoutes = new Hono<WorkspaceEnv>()
       await db
         .update(schema.channelBinding)
         .set({
-          config: { address },
+          config,
           enabled: enabled === false ? 0 : 1,
-          // email 免验证：写入即视为已验证
+          // 免二次验证：写入即视为已验证（Telegram 档再做 /start 验证）
           verifiedAt: new Date(),
         })
         .where(eq(schema.channelBinding.id, existing.id));
@@ -91,7 +104,7 @@ export const channelRoutes = new Hono<WorkspaceEnv>()
       workspaceId,
       userId: sub,
       kind,
-      config: { address },
+      config,
       enabled: enabled === false ? 0 : 1,
       verifiedAt: new Date(),
     });

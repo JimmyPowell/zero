@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · N2 企业微信群机器人渠道
+
+- **后端**：`lib/channels/wecom.ts`（群机器人 incoming webhook，POST markdown，解析 `errcode`）；outbox `deliver` 加 `wecom` 分支；`notify` 收件人渠道查询从「仅 email」泛化为「所有已实现 adapter 的渠道」（`SUPPORTED_CHANNELS=[email,wecom]`，一绑定一 outbox 行、内容渠道无关）；`channels` 路由 upsert 改判别联合（email 要 address / wecom 要 webhookUrl）。
+- **前端**：`SettingsView` 抽出通用 `ChannelCard`（邮件 / 企业微信共用），通知 section 下两张卡片；api-client `UpsertChannelPayload` 改联合 + 类型；i18n 补 `settings.wecom*`。
+- **验证**：server typecheck + web `tsc -b`/`vite build` 通过；本地 mock 企业微信端点实测 `created → 入队 wecom 行 → 投递 sent → mock 收到正确 markdown`；渠道 CRUD 联合校验仍 OK。
+- **待真实验证**：需用户在企业微信群加「群机器人」拿到 webhook 地址（填到设置页或我配），即可真实推送。
+- 下一步：N3 Telegram（出站 + 入站双向回控）。
+
 ## 2026-06-19 · 通知设置前端页（自助开关邮件通知）
 
 - 新增**「设置」**入口（左侧栏底部，齿轮图标，独立于主菜单）+ `SettingsView`：通知 section 下「邮件」渠道卡片 —— 开关 + 邮箱输入（默认填账号邮箱）+ 保存 + 移除，状态「已开启 · 将发往 xxx」；底部留「更多渠道即将上线」。

@@ -3,6 +3,9 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { config } from "@/config";
 
+// 已实现 adapter 的渠道（outbox worker 能投递的）。新增渠道在此登记。
+const SUPPORTED_CHANNELS = ["email", "wecom"] as const;
+
 // 通知分发入口：某 issue 事件发生后调用，解析收件人 → 渲染 → 落 notification_outbox。
 // 设计为 fire-and-forget：调用方不 await、不让它影响主请求；内部自吞异常绝不抛出。
 
@@ -86,14 +89,14 @@ export async function notifyIssueEvent(params: NotifyParams): Promise<void> {
       memberIds.add(issue.assigneeId);
     if (memberIds.size === 0) return;
 
-    // 取这些用户在本工作空间「已启用的 email 渠道绑定」
+    // 取这些用户在本工作空间「已启用、且已实现 adapter」的渠道绑定
     const bindings = await db
       .select()
       .from(schema.channelBinding)
       .where(
         and(
           eq(schema.channelBinding.workspaceId, issue.workspaceId),
-          eq(schema.channelBinding.kind, "email"),
+          inArray(schema.channelBinding.kind, [...SUPPORTED_CHANNELS]),
           eq(schema.channelBinding.enabled, 1),
           inArray(schema.channelBinding.userId, [...memberIds]),
         ),
@@ -102,13 +105,14 @@ export async function notifyIssueEvent(params: NotifyParams): Promise<void> {
 
     const { subject, text, html } = render(kind, issue, issueId);
 
+    // 每个绑定一条 outbox；渲染内容渠道无关，各 adapter 自行格式化
     const rows = bindings.map((b) => ({
       id: crypto.randomUUID(),
       workspaceId: issue.workspaceId,
       eventId: eventId ?? null,
       issueId,
       bindingId: b.id,
-      channel: "email" as const,
+      channel: b.kind,
       subject,
       body: text,
       payload: { html },

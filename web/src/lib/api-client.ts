@@ -301,17 +301,15 @@ export type ChannelKind = "email" | "telegram" | "wecom" | "feishu" | "webpush";
 export interface ChannelBinding {
   id: string;
   kind: ChannelKind;
-  config: { address?: string } & Record<string, unknown>;
+  config: { address?: string; webhookUrl?: string } & Record<string, unknown>;
   enabled: boolean;
   verifiedAt: string | null;
   createdAt: string;
 }
 
-export interface UpsertChannelPayload {
-  kind: "email";
-  address: string;
-  enabled?: boolean;
-}
+export type UpsertChannelPayload =
+  | { kind: "email"; address: string; enabled?: boolean }
+  | { kind: "wecom"; webhookUrl: string; enabled?: boolean };
 
 interface AuthResponse {
   token: string;

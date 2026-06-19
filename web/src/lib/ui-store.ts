@@ -230,7 +230,12 @@ const messages: Record<Locale, Record<string, string>> = {
     "settings.remove": "移除",
     "settings.removeConfirm": "确定移除邮件通知渠道？",
     "settings.invalidEmail": "邮箱格式不正确",
-    "settings.moreSoon": "更多渠道（企业微信 / Telegram / 飞书）即将上线",
+    "settings.wecom": "企业微信",
+    "settings.wecomDesc": "推送到企业微信「群机器人」。",
+    "settings.wecomPh": "群机器人 Webhook 地址",
+    "settings.wecomConfigured": "已配置群机器人",
+    "settings.invalidUrl": "Webhook 地址不正确",
+    "settings.moreSoon": "更多渠道（Telegram / 飞书 / 移动端）即将上线",
   },
   en: {
     brand: "Zero",
@@ -449,7 +454,12 @@ const messages: Record<Locale, Record<string, string>> = {
     "settings.remove": "Remove",
     "settings.removeConfirm": "Remove the email notification channel?",
     "settings.invalidEmail": "Invalid email address",
-    "settings.moreSoon": "More channels (WeCom / Telegram / Feishu) coming soon",
+    "settings.wecom": "WeCom",
+    "settings.wecomDesc": "Push to a WeCom group robot.",
+    "settings.wecomPh": "Group robot webhook URL",
+    "settings.wecomConfigured": "Group robot configured",
+    "settings.invalidUrl": "Invalid webhook URL",
+    "settings.moreSoon": "More channels (Telegram / Feishu / mobile) coming soon",
   },
 };
 
