@@ -10,7 +10,7 @@ import {
   type WorkspaceEnv,
 } from "@/middleware/workspace";
 
-const providerEnum = z.enum(["claude_code", "codex", "opencode"]);
+const providerEnum = z.enum(["claude_code", "codex", "opencode", "kimi"]);
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "请输入智能体名称").max(64),

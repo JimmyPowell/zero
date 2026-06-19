@@ -173,7 +173,12 @@ export const agent = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     avatarUrl: text("avatar_url"),
     // 底层编码 Agent CLI
-    provider: mysqlEnum("provider", ["claude_code", "codex", "opencode"])
+    provider: mysqlEnum("provider", [
+      "claude_code",
+      "codex",
+      "opencode",
+      "kimi",
+    ])
       .notNull()
       .default("claude_code"),
     model: varchar("model", { length: 128 }),
