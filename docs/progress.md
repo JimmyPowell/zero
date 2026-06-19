@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · 修复会话续接（No conversation found）
+
+- **根因**：daemon 每个 task 一个新临时目录 `~/.zero/work/<taskId>`，而 Claude Code 会话**按工作目录**存，跨 task `--resume` 必失败。
+- **修复**：① 工作目录改成**按 issue 固定**（`~/.zero/work/<issueId>`），同 issue 多轮共用目录，resume 能续上；② resume 失败（换目录/过期/被删）**自动回退新会话**——上下文已在装配的 prompt 里，不失忆。
+- **实测**：round1 用失效 session → 回退新会话成功；round2 用固定目录里的新 session → 真正 resume 续上（无回退）。
+- 这是 B3.3「工作目录按 issue 固定」的前置；后续接上**绑定模型**（仓库→worktree / 工作目录→就地 / 不绑→空目录）。
+
 ## 2026-06-19 · 合并「最新活动时间」+ 搜索聚焦修复
 
 - 合并分支 `feat/issue-last-activity-time`：issue 列表/搜索结果右侧、详情右栏显示**最新活动时间** —— `lastActivityAt = COALESCE(MAX(issue_event.created_at), issue.created_at)`（任意事件：评论/模型回复/状态变更/执行），**列表仍按创建倒序、不重排**（走现成索引 `idx_issue_event_issue`）。

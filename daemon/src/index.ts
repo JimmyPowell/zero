@@ -216,6 +216,8 @@ async function tick(server: string, token: string) {
 
   busy = true;
   const taskId = claim.task.id;
+  const issueId = claim.task.issueId;
+  const priorSession = claim.task.sessionId;
   const title = claim.context?.issue.title ?? "";
   console.log(`认领任务 ${taskId}（${title}）`);
   try {
@@ -225,12 +227,23 @@ async function tick(server: string, token: string) {
       });
       return;
     }
-    const cwd = join(WORK_DIR, taskId);
+    // 工作目录按 issue 固定（不再按 task），保证同一 issue 多轮的 claude 会话可续
+    const cwd = join(WORK_DIR, issueId);
     ensureDir(cwd);
-    const r = await runClaude(buildPrompt(claim), cwd, {
+    const prompt = buildPrompt(claim);
+    let r = await runClaude(prompt, cwd, {
       model: claim.agent.model,
-      sessionId: claim.task.sessionId,
+      sessionId: priorSession,
     });
+    // 会话失效（换目录/过期/被删）→ 新会话重跑；上下文已全在 prompt 里，不失忆
+    if (
+      !r.ok &&
+      priorSession &&
+      /no conversation found|session id/i.test(r.error ?? "")
+    ) {
+      console.log(`会话 ${priorSession} 失效，改用新会话重跑`);
+      r = await runClaude(prompt, cwd, { model: claim.agent.model });
+    }
     if (r.ok) {
       await post(server, token, `/daemon/tasks/${taskId}/complete`, {
         summary: r.result,
