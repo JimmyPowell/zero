@@ -61,6 +61,9 @@ const issueColumns = {
   assigneeId: schema.issue.assigneeId,
   createdAt: schema.issue.createdAt,
   updatedAt: schema.issue.updatedAt,
+  // 最新活动时间：该 issue 下任意事件（评论/模型回复/状态变更/执行）的最新时间，
+  // 无事件时回退到创建时间。用关联子查询实时算，走 idx_issue_event_issue 索引。
+  lastActivityAt: sql<string>`COALESCE((SELECT MAX(${schema.issueEvent.createdAt}) FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id}), ${schema.issue.createdAt})`,
   baseBranch: schema.issue.baseBranch,
   repoId: schema.issue.repoId,
   repoName: schema.repo.name,
@@ -116,6 +119,7 @@ function shape(row: IssueRow) {
         : null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    lastActivityAt: row.lastActivityAt,
   };
 }
 

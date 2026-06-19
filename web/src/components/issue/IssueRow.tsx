@@ -1,6 +1,7 @@
 import { ActorAvatar } from "@/components/ActorAvatar";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
+import { relativeTime } from "@/lib/time";
 import { statusMeta, priorityMeta, issueKey } from "@/lib/issue-meta";
 import type { Issue } from "@/lib/api-client";
 
@@ -11,7 +12,7 @@ export function IssueRow({
   issue: Issue;
   onClick?: (issue: Issue) => void;
 }) {
-  const { t } = useUi();
+  const { t, locale } = useUi();
   const sm = statusMeta[issue.status];
   const pm = priorityMeta[issue.priority];
   const SIcon = sm.Icon;
@@ -34,6 +35,12 @@ export function IssueRow({
       </span>
       <span className="min-w-0 flex-1 truncate text-sm text-foreground">
         {issue.title}
+      </span>
+      <span
+        title={t("issue.lastActivity")}
+        className="shrink-0 text-xs text-muted-foreground tabular-nums"
+      >
+        {relativeTime(issue.lastActivityAt, locale)}
       </span>
       {issue.assignee && (
         <ActorAvatar
