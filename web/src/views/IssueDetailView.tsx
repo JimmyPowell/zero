@@ -285,9 +285,9 @@ export function IssueDetailView() {
               </span>
             </div>
             <div className="flex justify-between">
-              <span>{t("detail.updated")}</span>
+              <span>{t("issue.lastActivity")}</span>
               <span className="text-foreground">
-                {relativeTime(issue.updatedAt, locale)}
+                {relativeTime(issue.lastActivityAt, locale)}
               </span>
             </div>
           </div>

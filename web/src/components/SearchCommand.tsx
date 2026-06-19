@@ -9,12 +9,13 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { useUi } from "@/lib/ui-store";
+import { useUi, type Locale } from "@/lib/ui-store";
 import { api, type Issue } from "@/lib/api-client";
+import { relativeTime } from "@/lib/time";
 import { statusMeta, issueKey } from "@/lib/issue-meta";
 import { cn } from "@/lib/utils";
 
-function ResultRow({ issue }: { issue: Issue }) {
+function ResultRow({ issue, locale }: { issue: Issue; locale: Locale }) {
   const m = statusMeta[issue.status];
   const Icon = m.Icon;
   return (
@@ -23,7 +24,10 @@ function ResultRow({ issue }: { issue: Issue }) {
       <span className="w-[68px] shrink-0 font-mono text-xs text-muted-foreground">
         {issueKey(issue.number)}
       </span>
-      <span className="truncate">{issue.title}</span>
+      <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        {relativeTime(issue.lastActivityAt, locale)}
+      </span>
     </>
   );
 }
@@ -43,7 +47,7 @@ export function SearchCommand({
   onNewIssue: () => void;
   onSelectIssue: (issue: Issue) => void;
 }) {
-  const { t } = useUi();
+  const { t, locale } = useUi();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(false);
@@ -149,7 +153,7 @@ export function SearchCommand({
                         onSelectIssue(issue);
                       }}
                     >
-                      <ResultRow issue={issue} />
+                      <ResultRow issue={issue} locale={locale} />
                     </CommandItem>
                   ))
                 )}
@@ -169,7 +173,10 @@ export function SearchCommand({
                     <span className="w-[68px] shrink-0 font-mono text-xs text-muted-foreground">
                       {issueKey(issue.number)}
                     </span>
-                    <span className="truncate">{issue.title}</span>
+                    <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {relativeTime(issue.lastActivityAt, locale)}
+                    </span>
                   </CommandItem>
                 ))}
               </CommandGroup>
