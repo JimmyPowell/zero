@@ -218,9 +218,16 @@ async function registerCommands(): Promise<void> {
   try {
     await tgApi("setMyCommands", {
       commands: [
+        { command: "new", description: "新建 issue（/new 标题，或引导式）" },
         { command: "issues", description: "列出最近 issue 并点选" },
+        { command: "search", description: "搜索 issue（/search 关键词）" },
         { command: "use", description: "选中某个 issue（如 /use 12）" },
         { command: "show", description: "看 issue 详情" },
+        { command: "comment", description: "评论（/comment 12 文字）" },
+        { command: "status", description: "改状态（/status 12 完成）" },
+        { command: "priority", description: "改优先级（/priority 12 高）" },
+        { command: "assign", description: "指派（/assign 12 agent名|me）" },
+        { command: "ws", description: "切换工作空间" },
         { command: "help", description: "帮助" },
       ],
     });

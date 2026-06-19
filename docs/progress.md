@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · C2 Telegram 命令全集
+
+- **共享动作层补全** `issue-actions.ts`：`createIssue`（建+created 事件+派发+通知）、`searchIssues`、`setIssuePriority`、`assignIssue`（member/agent，agent 非 backlog 则派发）、`listAgents`/`findAgentByName`、`listWorkspacesForUser`/`isWorkspaceMember`、`getUserName`；优先级常量/标签。
+- **聊天核心** `chat/core.ts`：新命令 `/new`（一行式 + **引导式** 标题→描述，`/cancel` 取消，会话 `flow` 状态）、`/comment`、`/status`、`/priority`、`/assign`、`/search`、`/ws`（按钮切空间，校验成员）；状态/优先级支持中英别名（完成/评审/高/中…）；`pickIssue` 解析「[ZERO-N] 其余」——带号用号、不带用活动 issue。
+- **Telegram**：命令菜单补全 11 项。
+- **验证**：server typecheck 通过；脚本驱动 12 项全过 —— /new(一行式+DB)、/status 评审、/priority 高、/comment、/assign me、/search 命中、引导式 /new(标题→描述跳过→建)、/cancel、/ws；用独立 chatId 测试避免触发真机推送，含建后清理。
+- 下一步 C3 富交互（按钮选择器/原地更新卡片/确认）+ 企微接同一 router。
+
 ## 2026-06-19 · C1 Telegram 双向回控（基础闭环）
 
 - **方案定稿**：双向回控（聊天指挥）完整方案 + 能力清单 + 分期 C1/C2/C3 写入 [notifications.md §十]。Telegram 先行。

@@ -15,6 +15,8 @@ type Session = {
   userId: string;
   activeIssueId?: string;
   activeNumber?: number;
+  // 多步流程（/new 引导式）
+  flow?: { kind: "new"; step: "title" | "desc"; draft: { title?: string } };
 };
 const sessions = new Map<string, Session>();
 
@@ -24,6 +26,44 @@ function truncate(s: string, n: number): string {
 function parseNum(s: string): number | null {
   const m = s.trim().match(/(\d+)/);
   return m ? Number(m[1]) : null;
+}
+
+const STATUS_ALIASES: Record<string, actions.IssueStatus> = {
+  done: "done", 完成: "done", 已完成: "done",
+  review: "in_review", in_review: "in_review", 评审: "in_review", 待评审: "in_review",
+  progress: "in_progress", in_progress: "in_progress", doing: "in_progress", 进行中: "in_progress",
+  todo: "todo", 待办: "todo",
+  backlog: "backlog", 待办池: "backlog",
+  cancel: "cancelled", cancelled: "cancelled", 取消: "cancelled", 已取消: "cancelled",
+};
+const PRIORITY_ALIASES: Record<string, actions.IssuePriority> = {
+  urgent: "urgent", 紧急: "urgent",
+  high: "high", 高: "high",
+  medium: "medium", 中: "medium",
+  low: "low", 低: "low",
+  none: "none", 无: "none",
+};
+function parseStatus(w?: string): actions.IssueStatus | null {
+  return w ? (STATUS_ALIASES[w.toLowerCase()] ?? null) : null;
+}
+function parsePriority(w?: string): actions.IssuePriority | null {
+  return w ? (PRIORITY_ALIASES[w.toLowerCase()] ?? null) : null;
+}
+
+// 解析「[ZERO-N] 其余…」：首 token 是 issue 引用则取它，否则用活动 issue
+async function pickIssue(
+  s: Session,
+  tokens: string[],
+): Promise<{ issueId?: string; number?: number; rest: string[]; error?: string }> {
+  if (tokens.length && /^(?:zero-|#)?\d+$/i.test(tokens[0])) {
+    const n = Number(tokens[0].replace(/\D/g, ""));
+    const iss = await actions.findIssueByNumber(s.workspaceId, n);
+    if (!iss) return { rest: tokens.slice(1), error: `找不到 ZERO-${n}` };
+    return { issueId: iss.id, number: iss.number, rest: tokens.slice(1) };
+  }
+  if (!s.activeIssueId)
+    return { rest: tokens, error: "未指定 issue：带上 ZERO-12，或先 /use 选中。" };
+  return { issueId: s.activeIssueId, number: s.activeNumber, rest: tokens };
 }
 
 // 从渠道绑定恢复 (workspace, user)；缓存到 session
@@ -89,13 +129,42 @@ async function briefReply(
 }
 
 const HELP = [
-  "Zero 聊天指挥（C1）：",
-  "· /issues — 列出最近 issue 并点选",
-  "· /use ZERO-12 — 选中某个 issue",
-  "· /show [ZERO-12] — 看详情",
-  "选中后：直接打字即评论它；按钮可改状态。",
-  "也可直接回复某条通知 → 评论那个 issue。",
+  "Zero 聊天指挥：",
+  "· /new <标题> — 新建（或 /new 引导式）",
+  "· /issues、/search <词> — 列表 / 搜索",
+  "· /use ZERO-12 — 选中",
+  "· /show [ZERO-12] — 详情",
+  "· /comment [ZERO-12] <文字> — 评论",
+  "· /status [ZERO-12] <完成|评审|进行中|待办|取消>",
+  "· /priority [ZERO-12] <紧急|高|中|低|无>",
+  "· /assign [ZERO-12] <agent名|me> — 指派",
+  "· /ws — 切换工作空间",
+  "选中后直接打字即评论它；回复通知也能评论那条。",
 ].join("\n");
+
+async function handleFlow(s: Session, text: string): Promise<ChatReply> {
+  const f = s.flow;
+  if (!f) return { text: "" };
+  if (f.kind === "new") {
+    if (f.step === "title") {
+      f.draft.title = text;
+      f.step = "desc";
+      return { text: `标题：${text}\n请输入描述（发「-」跳过）。` };
+    }
+    const desc = text === "-" ? null : text;
+    const title = f.draft.title ?? text;
+    s.flow = undefined;
+    const iss = await actions.createIssue(s.workspaceId, s.userId, {
+      title,
+      description: desc,
+    });
+    s.activeIssueId = iss.id;
+    s.activeNumber = iss.number;
+    return briefReply(s, iss.id, `✅ 已创建 ZERO-${iss.number}`);
+  }
+  s.flow = undefined;
+  return { text: "已重置。" };
+}
 
 async function handleCommand(
   s: Session,
@@ -139,6 +208,106 @@ async function handleCommand(
       if (!id) return { text: "用法：/show ZERO-12（或先 /use 选中）" };
       return briefReply(s, id);
     }
+    case "/cancel":
+      if (s.flow) {
+        s.flow = undefined;
+        return { text: "已取消当前操作。" };
+      }
+      return { text: "没有进行中的操作。" };
+    case "/new": {
+      if (arg.trim()) {
+        const iss = await actions.createIssue(s.workspaceId, s.userId, {
+          title: arg.trim(),
+        });
+        s.activeIssueId = iss.id;
+        s.activeNumber = iss.number;
+        return briefReply(s, iss.id, `✅ 已创建 ZERO-${iss.number}`);
+      }
+      s.flow = { kind: "new", step: "title", draft: {} };
+      return { text: "新建 issue：请输入标题。（/cancel 取消）" };
+    }
+    case "/search": {
+      if (!arg.trim()) return { text: "用法：/search 关键词" };
+      const list = await actions.searchIssues(s.workspaceId, arg.trim());
+      if (!list.length) return { text: `没有匹配「${arg.trim()}」的 issue。` };
+      return {
+        text: `搜索「${arg.trim()}」：`,
+        buttons: list.map((i) => [
+          { label: `ZERO-${i.number} ${truncate(i.title, 24)}`, data: `o:${i.id}` },
+        ]),
+      };
+    }
+    case "/comment": {
+      const p = await pickIssue(s, rest);
+      if (p.error || !p.issueId) return { text: p.error ?? "未指定 issue" };
+      const body = p.rest.join(" ").trim();
+      if (!body) return { text: "用法：/comment ZERO-12 评论内容" };
+      await actions.addIssueComment(s.workspaceId, p.issueId, s.userId, body);
+      const b = await actions.getIssueBrief(s.workspaceId, p.issueId);
+      return {
+        text: `💬 已评论到 ZERO-${b?.number}`,
+        buttons: statusButtons(p.issueId, b?.status),
+      };
+    }
+    case "/status": {
+      const p = await pickIssue(s, rest);
+      if (p.error || !p.issueId) return { text: p.error ?? "未指定 issue" };
+      const st = parseStatus(p.rest[0]);
+      if (!st)
+        return { text: "用法：/status ZERO-12 完成|评审|进行中|待办|取消" };
+      const r = await actions.setIssueStatus(s.workspaceId, p.issueId, s.userId, st);
+      return briefReply(
+        s,
+        p.issueId,
+        r ? `状态已改为「${actions.STATUS_LABEL[st]}」` : "状态未变",
+      );
+    }
+    case "/priority": {
+      const p = await pickIssue(s, rest);
+      if (p.error || !p.issueId) return { text: p.error ?? "未指定 issue" };
+      const pr = parsePriority(p.rest[0]);
+      if (!pr) return { text: "用法：/priority ZERO-12 紧急|高|中|低|无" };
+      const r = await actions.setIssuePriority(s.workspaceId, p.issueId, s.userId, pr);
+      return briefReply(
+        s,
+        p.issueId,
+        r ? `优先级已改为「${actions.PRIORITY_LABEL[pr]}」` : "优先级未变",
+      );
+    }
+    case "/assign": {
+      const p = await pickIssue(s, rest);
+      if (p.error || !p.issueId) return { text: p.error ?? "未指定 issue" };
+      const who = p.rest[0];
+      const agents = await actions.listAgents(s.workspaceId);
+      const agentNames = agents.map((a) => a.name).join("、") || "（无）";
+      if (!who)
+        return { text: `用法：/assign ZERO-12 <agent名|me>。可选：${agentNames}` };
+      if (who.toLowerCase() === "me" || who === "我") {
+        const name = (await actions.getUserName(s.userId)) ?? "我";
+        await actions.assignIssue(s.workspaceId, p.issueId, s.userId, {
+          type: "member",
+          id: s.userId,
+          name,
+        });
+        return briefReply(s, p.issueId, `已指派给 ${name}`);
+      }
+      const ag = await actions.findAgentByName(s.workspaceId, who);
+      if (!ag) return { text: `找不到 agent「${who}」。可选：${agentNames}` };
+      await actions.assignIssue(s.workspaceId, p.issueId, s.userId, {
+        type: "agent",
+        id: ag.id,
+        name: ag.name,
+      });
+      return briefReply(s, p.issueId, `已指派给 ${ag.name}（agent），将自动执行。`);
+    }
+    case "/ws": {
+      const wss = await actions.listWorkspacesForUser(s.userId);
+      if (wss.length <= 1) return { text: "你只有一个工作空间。" };
+      return {
+        text: "切换工作空间：",
+        buttons: wss.map((w) => [{ label: w.name, data: `w:${w.id}` }]),
+      };
+    }
     default:
       return { text: `未知命令。\n\n${HELP}` };
   }
@@ -157,6 +326,8 @@ export async function handleChatMessage(
     };
   const text = input.text.trim();
   if (!text) return null;
+  // 多步流程优先：流程进行中且非命令文本 → 喂给流程
+  if (s.flow && !text.startsWith("/")) return handleFlow(s, text);
   if (text.startsWith("/")) return handleCommand(s, text);
 
   // 非命令：回复绑定 > 活动 issue → 评论
@@ -207,6 +378,19 @@ export async function handleChatCallback(
         r ? `状态已改为「${label}」` : `状态未变（已是「${label}」）`,
       ),
       toast: r ? `→ ${label}` : "未变",
+    };
+  }
+  if (kind === "w") {
+    // 切换工作空间 w:<wsId>
+    const wsId = a;
+    if (!(await actions.isWorkspaceMember(s.userId, wsId)))
+      return { reply: { text: "无权切换到该工作空间。" } };
+    s.workspaceId = wsId;
+    s.activeIssueId = undefined;
+    s.activeNumber = undefined;
+    return {
+      reply: { text: "已切换工作空间。发 /issues 看该空间的 issue。" },
+      toast: "已切换",
     };
   }
   return { reply: { text: "未知操作。" } };

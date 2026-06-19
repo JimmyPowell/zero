@@ -1,7 +1,8 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, like, or, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { enqueueTaskForIssue } from "@/lib/dispatch";
+import { notifyIssueEvent } from "@/lib/notify";
 
 // 共享 issue 动作层：HTTP 路由与「聊天指挥」(Telegram/企微) 共用同一份业务逻辑。
 // 这里只放聊天回控 C1 需要的；后续命令全集逐步补齐，并让 routes/issues.ts 也收敛到这里。
@@ -23,6 +24,22 @@ export const STATUS_LABEL: Record<string, string> = {
   in_review: "评审中",
   done: "已完成",
   cancelled: "已取消",
+};
+
+export const ISSUE_PRIORITIES = [
+  "urgent",
+  "high",
+  "medium",
+  "low",
+  "none",
+] as const;
+export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
+export const PRIORITY_LABEL: Record<string, string> = {
+  urgent: "紧急",
+  high: "高",
+  medium: "中",
+  low: "低",
+  none: "无",
 };
 
 export type IssueRef = {
@@ -218,4 +235,196 @@ export async function setIssueStatus(
     await enqueueTaskForIssue(issueId);
   }
   return { from: cur.status, to: status };
+}
+
+// 新建 issue（默认进行中），写 created 事件 + 派发 + 通知。返回 ref。
+export async function createIssue(
+  workspaceId: string,
+  creatorUserId: string,
+  opts: { title: string; description?: string | null },
+): Promise<IssueRef> {
+  const id = crypto.randomUUID();
+  const createdEventId = crypto.randomUUID();
+  let number = 0;
+  await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ max: sql<number>`COALESCE(MAX(${schema.issue.number}), 0)` })
+      .from(schema.issue)
+      .where(eq(schema.issue.workspaceId, workspaceId));
+    number = Number(row?.max ?? 0) + 1;
+    await tx.insert(schema.issue).values({
+      id,
+      workspaceId,
+      number,
+      title: opts.title,
+      description: opts.description ?? null,
+      status: "in_progress",
+      priority: "none",
+      creatorId: creatorUserId,
+    });
+    await tx.insert(schema.issueEvent).values({
+      id: createdEventId,
+      issueId: id,
+      workspaceId,
+      actorType: "member",
+      actorId: creatorUserId,
+      kind: "created",
+    });
+  });
+  await enqueueTaskForIssue(id);
+  void notifyIssueEvent({ kind: "created", issueId: id, eventId: createdEventId });
+  return { id, number, title: opts.title, status: "in_progress" };
+}
+
+export async function searchIssues(
+  workspaceId: string,
+  q: string,
+): Promise<IssueRef[]> {
+  const kw = `%${q}%`;
+  return db
+    .select({
+      id: schema.issue.id,
+      number: schema.issue.number,
+      title: schema.issue.title,
+      status: schema.issue.status,
+    })
+    .from(schema.issue)
+    .where(
+      and(
+        eq(schema.issue.workspaceId, workspaceId),
+        or(like(schema.issue.title, kw), like(schema.issue.description, kw)),
+      ),
+    )
+    .orderBy(desc(schema.issue.createdAt))
+    .limit(8);
+}
+
+export async function setIssuePriority(
+  workspaceId: string,
+  issueId: string,
+  actorUserId: string,
+  priority: IssuePriority,
+): Promise<{ from: string; to: string } | null> {
+  const [cur] = await db
+    .select({ priority: schema.issue.priority })
+    .from(schema.issue)
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.workspaceId, workspaceId)),
+    )
+    .limit(1);
+  if (!cur || cur.priority === priority) return null;
+  await db
+    .update(schema.issue)
+    .set({ priority })
+    .where(eq(schema.issue.id, issueId));
+  await db.insert(schema.issueEvent).values({
+    id: crypto.randomUUID(),
+    issueId,
+    workspaceId,
+    actorType: "member",
+    actorId: actorUserId,
+    kind: "priority_change",
+    meta: { from: cur.priority, to: priority },
+  });
+  return { from: cur.priority, to: priority };
+}
+
+export async function listAgents(
+  workspaceId: string,
+): Promise<{ id: string; name: string }[]> {
+  return db
+    .select({ id: schema.agent.id, name: schema.agent.name })
+    .from(schema.agent)
+    .where(eq(schema.agent.workspaceId, workspaceId));
+}
+
+export async function findAgentByName(
+  workspaceId: string,
+  name: string,
+): Promise<{ id: string; name: string } | null> {
+  const agents = await listAgents(workspaceId);
+  const low = name.trim().toLowerCase();
+  return (
+    agents.find((a) => a.name.toLowerCase() === low) ??
+    agents.find((a) => a.name.toLowerCase().includes(low)) ??
+    null
+  );
+}
+
+export async function getUserName(userId: string): Promise<string | null> {
+  const [u] = await db
+    .select({ name: schema.user.name })
+    .from(schema.user)
+    .where(eq(schema.user.id, userId))
+    .limit(1);
+  return u?.name ?? null;
+}
+
+// 指派给 member 或 agent；写 assignment 事件；agent 且非 backlog 则派发。
+export async function assignIssue(
+  workspaceId: string,
+  issueId: string,
+  actorUserId: string,
+  assignee: { type: "member" | "agent"; id: string; name: string },
+): Promise<{ name: string } | null> {
+  const [cur] = await db
+    .select({
+      status: schema.issue.status,
+      assigneeType: schema.issue.assigneeType,
+      assigneeId: schema.issue.assigneeId,
+    })
+    .from(schema.issue)
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.workspaceId, workspaceId)),
+    )
+    .limit(1);
+  if (!cur) return null;
+  await db
+    .update(schema.issue)
+    .set({ assigneeType: assignee.type, assigneeId: assignee.id })
+    .where(eq(schema.issue.id, issueId));
+  await db.insert(schema.issueEvent).values({
+    id: crypto.randomUUID(),
+    issueId,
+    workspaceId,
+    actorType: "member",
+    actorId: actorUserId,
+    kind: "assignment",
+    meta: { to: { type: assignee.type, id: assignee.id, name: assignee.name } },
+  });
+  if (assignee.type === "agent" && cur.status !== "backlog") {
+    await enqueueTaskForIssue(issueId);
+  }
+  return { name: assignee.name };
+}
+
+// 用户所属工作空间（用于 /ws 切换）
+export async function listWorkspacesForUser(
+  userId: string,
+): Promise<{ id: string; name: string }[]> {
+  return db
+    .select({ id: schema.workspace.id, name: schema.workspace.name })
+    .from(schema.member)
+    .innerJoin(
+      schema.workspace,
+      eq(schema.member.workspaceId, schema.workspace.id),
+    )
+    .where(eq(schema.member.userId, userId));
+}
+
+export async function isWorkspaceMember(
+  userId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const [m] = await db
+    .select({ id: schema.member.id })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.userId, userId),
+        eq(schema.member.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+  return !!m;
 }
