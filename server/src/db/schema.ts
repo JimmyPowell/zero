@@ -7,6 +7,7 @@ import {
   int,
   json,
   decimal,
+  boolean,
   timestamp,
   mysqlEnum,
   unique,
@@ -172,12 +173,13 @@ export const agent = mysqlTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 255 }).notNull(),
     avatarUrl: text("avatar_url"),
+    description: text("description"), // 详情页用：这个 agent 是干嘛的
     // 底层编码 Agent CLI
     provider: mysqlEnum("provider", ["claude_code", "codex", "opencode"])
       .notNull()
       .default("claude_code"),
     model: varchar("model", { length: 128 }),
-    instructions: text("instructions"), // 系统指令 / 自定义提示
+    instructions: text("instructions"), // 系统指令 / 自定义提示（人格，常驻）
     runtimeId: char("runtime_id", { length: 36 }), // B2 预留：绑定的运行时
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
@@ -185,6 +187,82 @@ export const agent = mysqlTable(
   (t) => [
     unique("uniq_agent_workspace_name").on(t.workspaceId, t.name),
     index("idx_agent_workspace").on(t.workspaceId),
+  ],
+);
+
+// 技能（Skill）：工作空间级、可移植的能力包（SKILL.md 主体 + 附属文件）。
+// 遵循 SKILL.md 开放标准 → 跨 provider 可移植。content = SKILL.md 正文（不含
+// frontmatter）；物化进 worktree 时由 name/description 合成 frontmatter（见 daemon）。
+export const skill = mysqlTable(
+  "skill",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // 工作空间内唯一的 kebab 标识，= 物化后的目录名 / SKILL.md frontmatter 的 name
+    slug: varchar("slug", { length: 128 }).notNull(),
+    name: varchar("name", { length: 128 }).notNull(), // 人类可读名
+    // 渐进披露的关键：平时只有 name+description 进上下文，命中才加载正文
+    description: varchar("description", { length: 1024 }).notNull(),
+    content: text("content"), // SKILL.md 正文（不含 frontmatter）
+    // 来源：手动新建 / 从 GitHub 导入
+    source: mysqlEnum("source", ["manual", "github"]).notNull().default("manual"),
+    sourceRef: text("source_ref"), // 导入来源（repo URL / 子路径），manual 为空
+    // 正文 + 附件指纹：派发即快照、跑中锁版本（审计 / C5 版本锁定用）
+    contentHash: char("content_hash", { length: 64 }),
+    createdBy: char("created_by", { length: 36 }).references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [
+    unique("uniq_skill_workspace_slug").on(t.workspaceId, t.slug),
+    index("idx_skill_workspace").on(t.workspaceId),
+  ],
+);
+
+// 技能附属文件：与 SKILL.md 同级物化进工作目录的文件（脚本 / 模板 / 参考）。
+// 第一版只存文本；is_binary / storage_key 预留二进制（对象存储）到 C5，
+// 从结构上避免 Multica「二进制存 UTF-8 文本列会炸」的坑。
+export const skillFile = mysqlTable(
+  "skill_file",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    skillId: char("skill_id", { length: 36 })
+      .notNull()
+      .references(() => skill.id, { onDelete: "cascade" }),
+    path: varchar("path", { length: 512 }).notNull(), // skill 内相对路径（防穿越）
+    isBinary: boolean("is_binary").notNull().default(false),
+    content: text("content"), // 文本内容（二进制留空，走 storageKey）
+    storageKey: text("storage_key"), // 二进制对象存储键（C5）
+    size: int("size").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("uniq_skill_file_path").on(t.skillId, t.path),
+    index("idx_skill_file_skill").on(t.skillId),
+  ],
+);
+
+// 智能体 ↔ 技能：多对多显式挂载（库里有哪些 / 这个 agent 用哪几个）。
+export const agentSkill = mysqlTable(
+  "agent_skill",
+  {
+    agentId: char("agent_id", { length: 36 })
+      .notNull()
+      .references(() => agent.id, { onDelete: "cascade" }),
+    skillId: char("skill_id", { length: 36 })
+      .notNull()
+      .references(() => skill.id, { onDelete: "cascade" }),
+    position: int("position").notNull().default(0), // 展示 / 加载顺序
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("uniq_agent_skill").on(t.agentId, t.skillId),
+    index("idx_agent_skill_agent").on(t.agentId),
+    index("idx_agent_skill_skill").on(t.skillId),
   ],
 );
 
@@ -365,6 +443,9 @@ export type Issue = typeof issue.$inferSelect;
 export type Repo = typeof repo.$inferSelect;
 export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
+export type Skill = typeof skill.$inferSelect;
+export type SkillFile = typeof skillFile.$inferSelect;
+export type AgentSkill = typeof agentSkill.$inferSelect;
 export type Runtime = typeof runtime.$inferSelect;
 export type RuntimeWorkspace = typeof runtimeWorkspace.$inferSelect;
 export type Task = typeof task.$inferSelect;

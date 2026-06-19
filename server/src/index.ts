@@ -8,6 +8,7 @@ import { workspaceRoutes } from "@/routes/workspaces";
 import { issueRoutes } from "@/routes/issues";
 import { repoRoutes } from "@/routes/repos";
 import { agentRoutes } from "@/routes/agents";
+import { skillRoutes } from "@/routes/skills";
 import { runtimeRoutes } from "@/routes/runtimes";
 import { daemonRoutes } from "@/routes/daemon";
 
@@ -30,6 +31,7 @@ app.route("/workspaces", workspaceRoutes);
 app.route("/workspaces/:wsId/issues", issueRoutes);
 app.route("/workspaces/:wsId/repos", repoRoutes);
 app.route("/workspaces/:wsId/agents", agentRoutes);
+app.route("/workspaces/:wsId/skills", skillRoutes);
 app.route("/workspaces/:wsId/runtimes", runtimeRoutes);
 app.route("/daemon", daemonRoutes);
 
