@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · B3.3 绑定模型（后端 + daemon）—— worktree 真跑通 🎉
+
+- **设计**：绑定对象决定工作模式 —— ① 仓库(git URL/本地 git 仓库)→隔离 **worktree**(分支 `zero/ZERO-N`)；② 工作目录(任意本地文件夹)→**就地**(不隔离)；③ 不绑→临时空目录。比 Multica"只有隔离 worktree"更灵活。
+- **数据**：issue 加 `work_dir`(迁移 0008)，与 `repoId` 互斥。
+- **后端**：create/PATCH 支持绑仓库或工作目录(互斥校验，绑仓库兜底基准分支)；`assembleContext` 输出 `work` 模式描述给 daemon。
+- **daemon**：`prepareWorkdir` —— URL 仓库 clone 到 `~/.zero/repos` 缓存 / 本地仓库直接用，每 issue 一棵 worktree(`~/.zero/worktrees/<issue>`，分支 `zero/ZERO-N`，复用)；工作目录就地；空目录兜底。`buildPrompt` 按模式给指令。
+- **实测**(绑本地仓库)：agent 在 worktree 的 `zero/ZERO-1` 分支建 `hello.txt` + commit `add hello`；**用户主仓库 main 完全未动**（隔离确认）。
+- **待办**：前端绑定选择 UI + 清晰展示当前绑定/模式(B3.3c)；issue 关闭自动清理 worktree。
+
 ## 2026-06-19 · 修复会话续接（No conversation found）
 
 - **根因**：daemon 每个 task 一个新临时目录 `~/.zero/work/<taskId>`，而 Claude Code 会话**按工作目录**存，跨 task `--resume` 必失败。

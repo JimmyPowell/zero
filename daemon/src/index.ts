@@ -22,7 +22,9 @@ const CLAIM_MS = 5_000;
 const ZERO_DIR = join(homedir(), ".zero");
 const PID_FILE = join(ZERO_DIR, "daemon.pid");
 const LOG_FILE = join(ZERO_DIR, "daemon.log");
-const WORK_DIR = join(ZERO_DIR, "work");
+const WORK_DIR = join(ZERO_DIR, "work"); // 空目录模式
+const REPOS_DIR = join(ZERO_DIR, "repos"); // URL 仓库的源 clone 缓存
+const WORKTREES_DIR = join(ZERO_DIR, "worktrees"); // 每个 issue 一棵 worktree
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -97,6 +99,11 @@ function enabled(caps: Record<string, boolean>): string {
 
 // ---- 任务执行 ----
 
+type WorkSpec =
+  | { mode: "repo"; repoUrl: string; baseBranch: string; branch: string }
+  | { mode: "dir"; path: string }
+  | { mode: "empty" };
+
 interface Claim {
   task: { id: string; issueId: string; sessionId: string | null } | null;
   agent?: {
@@ -113,7 +120,82 @@ interface Claim {
       url: string;
       baseBranch: string;
     } | null;
+    work?: WorkSpec;
   };
+}
+
+// ---- git / 工作目录准备 ----
+
+async function git(
+  args: string[],
+  cwd?: string,
+): Promise<{ ok: boolean; out: string; err: string }> {
+  const proc = Bun.spawn({
+    cmd: ["git", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: process.env,
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { ok: code === 0, out: out.trim(), err: err.trim() };
+}
+
+function isGitUrl(s: string): boolean {
+  return /^(https?:\/\/|git@|ssh:\/\/|git:\/\/)/.test(s) || s.endsWith(".git");
+}
+
+function sanitize(s: string): string {
+  return s.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
+}
+
+// 据工作模式准备 cwd：仓库→worktree / 工作目录→就地 / 空目录。失败抛错。
+async function prepareWorkdir(work: WorkSpec, issueId: string): Promise<string> {
+  if (work.mode === "dir") {
+    if (!existsSync(work.path)) throw new Error(`工作目录不存在：${work.path}`);
+    return work.path; // 就地
+  }
+  if (work.mode === "empty") {
+    const dir = join(WORK_DIR, issueId);
+    ensureDir(dir);
+    return dir;
+  }
+  // mode === "repo" → 隔离 worktree
+  let source: string;
+  if (isGitUrl(work.repoUrl)) {
+    ensureDir(REPOS_DIR);
+    source = join(REPOS_DIR, sanitize(work.repoUrl));
+    if (!existsSync(source)) {
+      const r = await git(["clone", work.repoUrl, source]);
+      if (!r.ok) throw new Error(`克隆仓库失败：${r.err || r.out}`);
+    } else {
+      await git(["fetch", "--all", "--prune"], source); // best-effort
+    }
+  } else {
+    source = work.repoUrl; // 本地仓库路径
+    if (!existsSync(source)) throw new Error(`本地仓库不存在：${source}`);
+    const chk = await git(["rev-parse", "--git-dir"], source);
+    if (!chk.ok) throw new Error(`不是 git 仓库：${source}`);
+  }
+  // 每个 issue 一棵 worktree：已存在则复用（改动/会话累积），否则新建分支
+  const worktreePath = join(WORKTREES_DIR, issueId);
+  if (existsSync(worktreePath)) return worktreePath;
+  ensureDir(WORKTREES_DIR);
+  let r = await git(
+    ["worktree", "add", "-b", work.branch, worktreePath, work.baseBranch],
+    source,
+  );
+  if (!r.ok) {
+    // 分支已存在 → 直接挂这条分支
+    r = await git(["worktree", "add", worktreePath, work.branch], source);
+    if (!r.ok) throw new Error(`创建 worktree 失败：${r.err || r.out}`);
+  }
+  return worktreePath;
 }
 
 // 把服务端装配好的上下文拼成给 agent 的 prompt
@@ -129,16 +211,20 @@ function buildPrompt(claim: Claim): string {
     L.push("\n## Conversation so far");
     for (const cm of context.comments) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
   }
-  if (context?.repo) {
+  const work = context?.work;
+  if (work?.mode === "repo") {
     L.push(
-      `\nRepository: ${context.repo.name} (${context.repo.url}), base branch ${context.repo.baseBranch}.`,
+      `\nYou are in a git worktree of repo "${context?.repo?.name ?? ""}" on branch ${work.branch} (based off ${work.baseBranch}). Make the code changes, commit them with git, then end with a concise summary.`,
+    );
+  } else if (work?.mode === "dir") {
+    L.push(
+      `\nYou are working directly in the directory ${work.path} (in-place, NOT isolated). Complete the task, then end with a concise summary.`,
     );
   } else {
-    L.push("\n(No repository attached yet — respond with your plan / answer.)");
+    L.push(
+      "\n(No repo/dir attached yet — respond with your plan / answer, then a concise summary.)",
+    );
   }
-  L.push(
-    "\nComplete the task, then end with a concise summary of what you did.",
-  );
   return L.join("\n");
 }
 
@@ -227,9 +313,19 @@ async function tick(server: string, token: string) {
       });
       return;
     }
-    // 工作目录按 issue 固定（不再按 task），保证同一 issue 多轮的 claude 会话可续
-    const cwd = join(WORK_DIR, issueId);
-    ensureDir(cwd);
+    // 准备工作目录（仓库→worktree / 工作目录→就地 / 空目录）；按 issue 固定保证会话可续
+    let cwd: string;
+    try {
+      cwd = await prepareWorkdir(
+        claim.context?.work ?? { mode: "empty" },
+        issueId,
+      );
+    } catch (err) {
+      await post(server, token, `/daemon/tasks/${taskId}/fail`, {
+        error: `准备工作目录失败：${(err as Error).message}`,
+      });
+      return;
+    }
     const prompt = buildPrompt(claim);
     let r = await runClaude(prompt, cwd, {
       model: claim.agent.model,

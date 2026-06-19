@@ -30,6 +30,10 @@ const createSchema = z.object({
   priority: priorityEnum.optional(),
   assigneeType: assigneeTypeEnum.optional(),
   assigneeId: z.string().uuid().optional(),
+  // 工作区绑定（仓库 与 工作目录 互斥）
+  repoId: z.string().uuid().optional(),
+  baseBranch: z.string().trim().max(255).optional(),
+  workDir: z.string().trim().max(1000).optional(),
 });
 
 const updateSchema = z
@@ -42,6 +46,7 @@ const updateSchema = z
     assigneeId: z.string().uuid().nullable().optional(), // null = 取消指派
     repoId: z.string().uuid().nullable().optional(), // null = 解绑仓库
     baseBranch: z.string().trim().max(255).nullable().optional(),
+    workDir: z.string().trim().max(1000).nullable().optional(), // 绑工作目录
   })
   .refine((o) => Object.keys(o).length > 0, "没有要更新的字段");
 
@@ -65,6 +70,7 @@ const issueColumns = {
   // 无事件时回退到创建时间。用关联子查询实时算，走 idx_issue_event_issue 索引。
   lastActivityAt: sql<string>`COALESCE((SELECT MAX(${schema.issueEvent.createdAt}) FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id}), ${schema.issue.createdAt})`,
   baseBranch: schema.issue.baseBranch,
+  workDir: schema.issue.workDir,
   repoId: schema.issue.repoId,
   repoName: schema.repo.name,
   repoDefaultBranch: schema.repo.defaultBranch,
@@ -127,6 +133,7 @@ function shapeDetail(row: IssueRow) {
   return {
     ...shape(row),
     baseBranch: row.baseBranch,
+    workDir: row.workDir,
     repo: row.repoId
       ? {
           id: row.repoId,
@@ -247,6 +254,26 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       if (!ok) return c.json({ error: "指派对象不在该工作空间" }, 400);
     }
 
+    // 工作区绑定：仓库 与 工作目录 互斥；绑仓库时校验 + 兜底基准分支
+    if (body.repoId && body.workDir) {
+      return c.json({ error: "仓库与工作目录只能绑其一" }, 400);
+    }
+    let baseBranch: string | null = null;
+    if (body.repoId) {
+      const [r] = await db
+        .select({ id: schema.repo.id, def: schema.repo.defaultBranch })
+        .from(schema.repo)
+        .where(
+          and(
+            eq(schema.repo.id, body.repoId),
+            eq(schema.repo.workspaceId, workspaceId),
+          ),
+        )
+        .limit(1);
+      if (!r) return c.json({ error: "仓库不存在" }, 400);
+      baseBranch = body.baseBranch?.trim() || r.def;
+    }
+
     const id = crypto.randomUUID();
     await db.transaction(async (tx) => {
       const [row] = await tx
@@ -265,6 +292,9 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         priority: body.priority ?? "none",
         assigneeType: body.assigneeType ?? null,
         assigneeId: body.assigneeId ?? null,
+        repoId: body.repoId ?? null,
+        baseBranch,
+        workDir: body.workDir ?? null,
         creatorId: sub,
       });
       await tx.insert(schema.issueEvent).values({
@@ -313,9 +343,14 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       .limit(1);
     if (!current) return c.json({ error: "需求不存在" }, 404);
 
+    // 工作区绑定：仓库 与 工作目录 互斥
+    if (patch.repoId && patch.workDir) {
+      return c.json({ error: "仓库与工作目录只能绑其一" }, 400);
+    }
+    let repoDefaultBranch: string | null = null;
     if (patch.repoId) {
       const [r] = await db
-        .select({ id: schema.repo.id })
+        .select({ def: schema.repo.defaultBranch })
         .from(schema.repo)
         .where(
           and(
@@ -325,6 +360,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         )
         .limit(1);
       if (!r) return c.json({ error: "仓库不存在" }, 400);
+      repoDefaultBranch = r.def;
     }
 
     const updates: Record<string, unknown> = {};
@@ -344,8 +380,25 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
 
     if (patch.title !== undefined) updates.title = patch.title;
     if (patch.description !== undefined) updates.description = patch.description;
-    if (patch.baseBranch !== undefined) updates.baseBranch = patch.baseBranch;
-    if (patch.repoId !== undefined) updates.repoId = patch.repoId;
+
+    // 绑定 repoId / workDir 互斥：设一个清另一个
+    if (patch.repoId) {
+      updates.repoId = patch.repoId;
+      updates.baseBranch = patch.baseBranch?.trim() || repoDefaultBranch || "main";
+      updates.workDir = null;
+    } else if (patch.repoId === null) {
+      updates.repoId = null;
+      updates.baseBranch = null;
+    } else if (patch.baseBranch !== undefined) {
+      updates.baseBranch = patch.baseBranch;
+    }
+    if (patch.workDir) {
+      updates.workDir = patch.workDir;
+      updates.repoId = null;
+      updates.baseBranch = null;
+    } else if (patch.workDir === null) {
+      updates.workDir = null;
+    }
 
     if (patch.status !== undefined && patch.status !== current.status) {
       updates.status = patch.status;

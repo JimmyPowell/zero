@@ -90,6 +90,7 @@ export async function assembleContext(issueId: string) {
       status: schema.issue.status,
       baseBranch: schema.issue.baseBranch,
       repoId: schema.issue.repoId,
+      workDir: schema.issue.workDir,
     })
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
@@ -146,6 +147,21 @@ export async function assembleContext(issueId: string) {
     }
   }
 
+  // 工作模式：daemon 据此决定 cwd（仓库→worktree / 工作目录→就地 / 空目录）
+  const work:
+    | { mode: "repo"; repoUrl: string; baseBranch: string; branch: string }
+    | { mode: "dir"; path: string }
+    | { mode: "empty" } = repo
+    ? {
+        mode: "repo",
+        repoUrl: repo.url,
+        baseBranch: repo.baseBranch,
+        branch: `zero/ZERO-${iss.number}`,
+      }
+    : iss.workDir
+      ? { mode: "dir", path: iss.workDir }
+      : { mode: "empty" };
+
   return {
     issue: {
       number: iss.number,
@@ -160,5 +176,6 @@ export async function assembleContext(issueId: string) {
       createdAt: cm.createdAt,
     })),
     repo,
+    work,
   };
 }

@@ -87,9 +87,13 @@ export const issue = mysqlTable(
       .references(() => user.id),
     // 父需求（子任务层级，弹窗暂不暴露，预留扩展位）
     parentIssueId: char("parent_issue_id", { length: 36 }),
-    // 绑定的仓库与基准分支（Phase A 占位，Phase B 接执行）
+    // 工作区绑定（三选一）：
+    //  - repoId(+baseBranch)：绑仓库 → 隔离 worktree（分支 zero/ZERO-N）
+    //  - workDir：绑本地工作目录 → 就地执行（不隔离）
+    //  - 都为空：临时空目录
     repoId: char("repo_id", { length: 36 }),
     baseBranch: varchar("base_branch", { length: 255 }),
+    workDir: text("work_dir"),
     dueDate: timestamp("due_date"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),

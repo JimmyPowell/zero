@@ -1,0 +1,1 @@
+ALTER TABLE `issue` ADD `work_dir` text;
