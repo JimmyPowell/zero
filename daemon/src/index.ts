@@ -1,11 +1,10 @@
 // Zero 本地运行时 daemon
 // 用法：
 //   zero-daemon start --server <url> --token <token>   后台启动（常驻）
-//   zero-daemon status                                  查看状态
-//   zero-daemon stop                                    停止
+//   zero-daemon status / stop                           状态 / 停止
 //   zero-daemon run   --server <url> --token <token>    前台运行（调试）
-// 职责（B2b）：发现本地编码 Agent CLI → 用配对令牌连上服务端 → 周期心跳。
-// 后续（B3）会在此基础上认领 task、在 worktree 里跑 agent、流式回传。
+// 职责：发现本地编码 Agent CLI → 配对令牌连服务端 → 心跳 →
+//       认领 task → 跑 agent（B3.2：Claude Code）→ 回传结果。
 
 import {
   existsSync,
@@ -19,17 +18,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const HEARTBEAT_MS = 20_000;
+const CLAIM_MS = 5_000;
 const ZERO_DIR = join(homedir(), ".zero");
 const PID_FILE = join(ZERO_DIR, "daemon.pid");
 const LOG_FILE = join(ZERO_DIR, "daemon.log");
+const WORK_DIR = join(ZERO_DIR, "work");
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function ensureDir() {
-  if (!existsSync(ZERO_DIR)) mkdirSync(ZERO_DIR, { recursive: true });
+function ensureDir(dir: string) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 function readPid(): number | null {
@@ -61,7 +62,6 @@ function requireConn(): { server: string; token: string } {
   return { server, token };
 }
 
-// 发现本地 CLI：在 PATH 中找 claude / codex / opencode
 function discover(): Record<string, boolean> {
   return {
     claude_code: Bun.which("claude") != null,
@@ -95,9 +95,152 @@ function enabled(caps: Record<string, boolean>): string {
   return on.length ? on.join(", ") : "（未发现任何 CLI）";
 }
 
-// 前台 worker：连服务端 + 心跳。忽略 SIGHUP，使其在终端关闭后仍存活
+// ---- 任务执行 ----
+
+interface Claim {
+  task: { id: string; issueId: string; sessionId: string | null } | null;
+  agent?: {
+    name: string;
+    provider: string;
+    model: string | null;
+    instructions: string | null;
+  };
+  context?: {
+    issue: { number: number; title: string; description: string | null };
+    comments: { author: string; body: string | null }[];
+    repo: {
+      name: string;
+      url: string;
+      baseBranch: string;
+    } | null;
+  };
+}
+
+// 把服务端装配好的上下文拼成给 agent 的 prompt
+function buildPrompt(claim: Claim): string {
+  const { agent, context } = claim;
+  const L: string[] = [];
+  L.push(`You are "${agent?.name}", an agent on the Zero platform.`);
+  if (agent?.instructions) L.push(agent.instructions);
+  L.push("");
+  L.push(`# Issue ZERO-${context?.issue.number}: ${context?.issue.title}`);
+  if (context?.issue.description) L.push(context.issue.description);
+  if (context?.comments.length) {
+    L.push("\n## Conversation so far");
+    for (const cm of context.comments) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
+  }
+  if (context?.repo) {
+    L.push(
+      `\nRepository: ${context.repo.name} (${context.repo.url}), base branch ${context.repo.baseBranch}.`,
+    );
+  } else {
+    L.push("\n(No repository attached yet — respond with your plan / answer.)");
+  }
+  L.push(
+    "\nComplete the task, then end with a concise summary of what you did.",
+  );
+  return L.join("\n");
+}
+
+// 跑 Claude Code（无头），返回最终文本 + 会话 id
+async function runClaude(
+  prompt: string,
+  cwd: string,
+  opts: { model?: string | null; sessionId?: string | null },
+): Promise<{ ok: boolean; result?: string; sessionId?: string; error?: string }> {
+  const cmd = [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--dangerously-skip-permissions",
+  ];
+  if (opts.model) cmd.push("--model", opts.model);
+  if (opts.sessionId) cmd.push("--resume", opts.sessionId);
+
+  const proc = Bun.spawn({
+    cmd,
+    stdin: new TextEncoder().encode(prompt),
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd,
+    env: process.env,
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) {
+    return { ok: false, error: (stderr || `claude exited ${code}`).slice(0, 800) };
+  }
+  try {
+    const j = JSON.parse(stdout) as { result?: string; session_id?: string };
+    return { ok: true, result: j.result ?? "", sessionId: j.session_id };
+  } catch {
+    return { ok: true, result: stdout.slice(0, 4000) };
+  }
+}
+
+let busy = false;
+
+async function tick(server: string, token: string) {
+  if (busy) return;
+  let claim: Claim;
+  try {
+    claim = await post<Claim>(server, token, "/daemon/tasks/claim", {});
+  } catch (err) {
+    console.error(`认领失败：${(err as Error).message}`);
+    return;
+  }
+  if (!claim.task) return;
+
+  busy = true;
+  const taskId = claim.task.id;
+  const title = claim.context?.issue.title ?? "";
+  console.log(`认领任务 ${taskId}（${title}）`);
+  try {
+    if (claim.agent?.provider !== "claude_code") {
+      await post(server, token, `/daemon/tasks/${taskId}/fail`, {
+        error: `provider ${claim.agent?.provider} 暂未支持（当前只接 Claude Code）`,
+      });
+      return;
+    }
+    const cwd = join(WORK_DIR, taskId);
+    ensureDir(cwd);
+    const r = await runClaude(buildPrompt(claim), cwd, {
+      model: claim.agent.model,
+      sessionId: claim.task.sessionId,
+    });
+    if (r.ok) {
+      await post(server, token, `/daemon/tasks/${taskId}/complete`, {
+        summary: r.result,
+        sessionId: r.sessionId,
+      });
+      console.log(`任务 ${taskId} 完成`);
+    } else {
+      await post(server, token, `/daemon/tasks/${taskId}/fail`, {
+        error: r.error,
+      });
+      console.log(`任务 ${taskId} 失败：${r.error}`);
+    }
+  } catch (err) {
+    try {
+      await post(server, token, `/daemon/tasks/${taskId}/fail`, {
+        error: (err as Error).message,
+      });
+    } catch {
+      /* 上报失败也忽略 */
+    }
+  } finally {
+    busy = false;
+  }
+}
+
+// 前台 worker：连服务端 + 心跳 + 认领执行。忽略 SIGHUP，关终端不退
 async function worker() {
   process.on("SIGHUP", () => {});
+  ensureDir(WORK_DIR);
   const { server, token } = requireConn();
   const caps = discover();
   console.log(`[${new Date().toISOString()}] Zero daemon → ${server}`);
@@ -112,7 +255,7 @@ async function worker() {
   }
   console.log(`已连接：${info.name}（runtime ${info.runtimeId}）`);
 
-  const timer = setInterval(async () => {
+  const hb = setInterval(async () => {
     try {
       await post(server, token, "/daemon/heartbeat", {
         capabilities: discover(),
@@ -122,8 +265,11 @@ async function worker() {
     }
   }, HEARTBEAT_MS);
 
+  const claimer = setInterval(() => void tick(server, token), CLAIM_MS);
+
   const shutdown = () => {
-    clearInterval(timer);
+    clearInterval(hb);
+    clearInterval(claimer);
     console.log(`[${new Date().toISOString()}] 已停止。`);
     process.exit(0);
   };
@@ -131,9 +277,10 @@ async function worker() {
   process.on("SIGINT", shutdown);
 }
 
-// 后台启动：把 worker 以分离子进程方式拉起，写 pid + 日志
+// ---- 进程生命周期 ----
+
 function start() {
-  ensureDir();
+  ensureDir(ZERO_DIR);
   const existing = readPid();
   if (existing != null && pidAlive(existing)) {
     console.log(`daemon 已在运行（pid ${existing}）。重启请先 stop。`);
@@ -142,7 +289,6 @@ function start() {
   const { server, token } = requireConn();
   const out = openSync(LOG_FILE, "a");
   const scriptPath = import.meta.path;
-  // 区分「bun 跑脚本」与「编译后单二进制」两种重启自身的方式
   const cmd = existsSync(scriptPath)
     ? [process.execPath, scriptPath, "run", "--server", server, "--token", token]
     : [process.execPath, "run", "--server", server, "--token", token];
@@ -202,7 +348,7 @@ function status() {
 
 const SUBS = ["start", "stop", "status", "run"];
 const raw = process.argv[2] ?? "";
-const sub = SUBS.includes(raw) ? raw : "start"; // 无子命令默认后台启动
+const sub = SUBS.includes(raw) ? raw : "start";
 
 if (sub === "stop") stop();
 else if (sub === "status") status();

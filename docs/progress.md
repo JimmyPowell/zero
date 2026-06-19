@@ -2,6 +2,12 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · B3.2 daemon 执行完成 —— 真实跑通 claude 🎉
+
+- daemon 加**认领循环（5s）+ 串行执行**：claim → `buildPrompt`（agent 指令 + issue 标题/描述 + 最近评论 + 仓库）→ `claude -p --output-format json --dangerously-skip-permissions [--model] [--resume]` → complete/fail 回传。先支持 `claude_code` provider；工作目录 `~/.zero/work/<taskId>`（worktree 留 B3.3）。
+- **真实端到端实测**：指派 issue 给 agent → daemon 认领 → 跑 claude → agent 真实中文回复进时间线（~15s）→ issue 变 in_review。
+- 下一步 **B3.3**：worktree（在绑定仓库的 `zero/ZERO-N` 分支上干活）+ 流式执行日志 + 会话续接打磨。
+
 ## 2026-06-19 · B3.1 派发骨架完成（服务端环路）
 
 **后端**（迁移 0005）
