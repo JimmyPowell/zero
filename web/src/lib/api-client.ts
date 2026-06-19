@@ -202,6 +202,7 @@ export interface CreateAgentPayload {
   provider?: AgentProvider;
   model?: string;
   instructions?: string;
+  runtimeId?: string | null;
 }
 
 export interface UpdateAgentPayload {
@@ -209,6 +210,22 @@ export interface UpdateAgentPayload {
   provider?: AgentProvider;
   model?: string | null;
   instructions?: string | null;
+  runtimeId?: string | null;
+}
+
+export interface Runtime {
+  id: string;
+  name: string;
+  kind: "local" | "cloud";
+  online: boolean;
+  capabilities: Record<string, boolean> | null;
+  lastHeartbeatAt: string | null;
+  createdAt: string;
+}
+
+export interface CreateRuntimePayload {
+  name: string;
+  kind?: "local" | "cloud";
 }
 
 export interface CreateRepoPayload {
@@ -319,6 +336,21 @@ export const api = {
 
   deleteAgent: (workspaceId: string, id: string) =>
     request<{ ok: boolean }>(`/workspaces/${workspaceId}/agents/${id}`, {
+      method: "DELETE",
+    }),
+
+  // ---- 运行时 ----
+  listRuntimes: (workspaceId: string) =>
+    request<{ runtimes: Runtime[] }>(`/workspaces/${workspaceId}/runtimes`),
+
+  createRuntime: (workspaceId: string, payload: CreateRuntimePayload) =>
+    request<{ runtime: Runtime; token: string }>(
+      `/workspaces/${workspaceId}/runtimes`,
+      { method: "POST", body: payload },
+    ),
+
+  deleteRuntime: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/runtimes/${id}`, {
       method: "DELETE",
     }),
 };

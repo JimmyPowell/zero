@@ -12,12 +12,14 @@ import {
   DropdownMenuCheck,
 } from "@/components/ui/dropdown-menu";
 import { pillTrigger } from "@/components/issue/pill";
+import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import {
   api,
   ApiError,
   type Agent,
   type AgentProvider,
+  type Runtime,
 } from "@/lib/api-client";
 
 const PROVIDERS: AgentProvider[] = ["claude_code", "codex", "opencode"];
@@ -47,18 +49,33 @@ export function CreateAgentDialog({
   const [provider, setProvider] = useState<AgentProvider>("claude_code");
   const [model, setModel] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [runtimeId, setRuntimeId] = useState<string | null>(null);
+  const [runtimes, setRuntimes] = useState<Runtime[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // 打开时根据 create / edit 初始化
+  // 打开时初始化 + 拉取运行时
   useEffect(() => {
     if (!open) return;
     setName(agent?.name ?? "");
     setProvider(agent?.provider ?? "claude_code");
     setModel(agent?.model ?? "");
     setInstructions(agent?.instructions ?? "");
+    setRuntimeId(agent?.runtimeId ?? null);
     setError(null);
   }, [open, agent]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void api
+      .listRuntimes(workspaceId)
+      .then((r) => alive && setRuntimes(r.runtimes))
+      .catch(() => alive && setRuntimes([]));
+    return () => {
+      alive = false;
+    };
+  }, [open, workspaceId]);
 
   useEffect(() => {
     if (!open) return;
@@ -70,6 +87,10 @@ export function CreateAgentDialog({
   }, [open, onClose]);
 
   if (!open) return null;
+
+  const boundRuntime = runtimeId
+    ? runtimes.find((r) => r.id === runtimeId)
+    : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -84,6 +105,7 @@ export function CreateAgentDialog({
               provider,
               model: model.trim() || null,
               instructions: instructions.trim() || null,
+              runtimeId,
             })
           ).agent
         : (
@@ -92,6 +114,7 @@ export function CreateAgentDialog({
               provider,
               model: model.trim() || undefined,
               instructions: instructions.trim() || undefined,
+              runtimeId,
             })
           ).agent;
       onSaved(saved);
@@ -131,26 +154,65 @@ export function CreateAgentDialog({
             />
           </label>
 
-          {/* 底层工具 */}
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm text-muted-foreground">
-              {t("agents.provider")}
-            </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger className={pillTrigger}>
-                <span>{providerLabel[provider]}</span>
-                <ChevronDown className="size-3.5 text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[180px]">
-                {PROVIDERS.map((p) => (
-                  <DropdownMenuItem key={p} onSelect={() => setProvider(p)}>
-                    <span className="flex-1">{providerLabel[p]}</span>
-                    <DropdownMenuCheck active={p === provider} />
+          {/* 底层工具 + 运行时 */}
+          <div className="flex gap-3">
+            <label className="flex flex-1 flex-col gap-1.5">
+              <span className="text-sm text-muted-foreground">
+                {t("agents.provider")}
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger className={pillTrigger}>
+                  <span>{providerLabel[provider]}</span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[180px]">
+                  {PROVIDERS.map((p) => (
+                    <DropdownMenuItem key={p} onSelect={() => setProvider(p)}>
+                      <span className="flex-1">{providerLabel[p]}</span>
+                      <DropdownMenuCheck active={p === provider} />
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </label>
+
+            <label className="flex flex-1 flex-col gap-1.5">
+              <span className="text-sm text-muted-foreground">
+                {t("agents.runtime")}
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger className={pillTrigger}>
+                  <span className={cn(!boundRuntime && "text-muted-foreground")}>
+                    {boundRuntime ? boundRuntime.name : t("agents.noRuntimeBind")}
+                  </span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[200px]">
+                  <DropdownMenuItem onSelect={() => setRuntimeId(null)}>
+                    <span className="flex-1">{t("agents.noRuntimeBind")}</span>
+                    <DropdownMenuCheck active={runtimeId == null} />
                   </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </label>
+                  {runtimes.map((r) => (
+                    <DropdownMenuItem
+                      key={r.id}
+                      onSelect={() => setRuntimeId(r.id)}
+                    >
+                      <span
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          r.online
+                            ? "bg-emerald-500"
+                            : "bg-muted-foreground/40",
+                        )}
+                      />
+                      <span className="flex-1 truncate">{r.name}</span>
+                      <DropdownMenuCheck active={runtimeId === r.id} />
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </label>
+          </div>
 
           {/* 模型 */}
           <label className="flex flex-col gap-1.5">

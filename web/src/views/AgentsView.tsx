@@ -10,7 +10,7 @@ import {
 } from "@/components/CreateAgentDialog";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { api, type Agent } from "@/lib/api-client";
+import { api, type Agent, type Runtime } from "@/lib/api-client";
 
 export function AgentsView() {
   const { t } = useUi();
@@ -18,6 +18,7 @@ export function AgentsView() {
   const wsId = currentWorkspace?.id ?? null;
 
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [runtimes, setRuntimes] = useState<Runtime[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -28,11 +29,14 @@ export function AgentsView() {
     if (!wsId) return;
     let alive = true;
     setStatus("loading");
-    api
-      .listAgents(wsId)
-      .then((r) => {
+    Promise.all([
+      api.listAgents(wsId),
+      api.listRuntimes(wsId).catch(() => ({ runtimes: [] as Runtime[] })),
+    ])
+      .then(([ag, rt]) => {
         if (!alive) return;
-        setAgents(r.agents);
+        setAgents(ag.agents);
+        setRuntimes(rt.runtimes);
         setStatus("ready");
       })
       .catch(() => alive && setStatus("error"));
@@ -114,7 +118,11 @@ export function AgentsView() {
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {agents.map((agent) => (
+            {agents.map((agent) => {
+              const rt = agent.runtimeId
+                ? runtimes.find((r) => r.id === agent.runtimeId)
+                : null;
+              return (
               <div
                 key={agent.id}
                 className="group flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-active-fg/30"
@@ -132,7 +140,7 @@ export function AgentsView() {
                   <p className="truncate text-xs text-muted-foreground">
                     {providerLabel[agent.provider]}
                     {agent.model ? ` · ${agent.model}` : ""} ·{" "}
-                    {t("agents.noRuntime")}
+                    {rt ? rt.name : t("agents.noRuntime")}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -154,7 +162,8 @@ export function AgentsView() {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

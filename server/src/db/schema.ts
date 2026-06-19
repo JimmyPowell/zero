@@ -179,6 +179,29 @@ export const agent = mysqlTable(
   ],
 );
 
+// 运行时：执行 agent 的地方（本地 daemon / 云端）。daemon 用 token 配对上来
+export const runtime = mysqlTable(
+  "runtime",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    kind: mysqlEnum("kind", ["local", "cloud"]).notNull().default("local"),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull(), // sha256(token)
+    // 发现到的 CLI 能力，如 {claude_code:true, codex:false, opencode:false}
+    capabilities: json("capabilities"),
+    lastHeartbeatAt: timestamp("last_heartbeat_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [
+    index("idx_runtime_workspace").on(t.workspaceId),
+    index("idx_runtime_token").on(t.tokenHash),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
@@ -186,3 +209,4 @@ export type Issue = typeof issue.$inferSelect;
 export type Repo = typeof repo.$inferSelect;
 export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
+export type Runtime = typeof runtime.$inferSelect;

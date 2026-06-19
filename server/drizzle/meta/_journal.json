@@ -29,6 +29,13 @@
       "when": 1781849062545,
       "tag": "0003_soft_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1781850120826,
+      "tag": "0004_bored_nextwave",
+      "breakpoints": true
     }
   ]
 }

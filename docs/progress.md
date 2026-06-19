@@ -2,6 +2,22 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-19 · B2a 运行时管理（服务端 + UI）完成
+
+**决定**：daemon 用 **Bun/TypeScript** 写（与服务端同栈、共享类型、可编译单二进制）。
+
+**后端**（迁移 0004）
+- `runtime` 表 + 配对令牌（sha256 存储，明文仅创建时返回一次）。
+- 工作空间接口：`GET/POST/DELETE /workspaces/:ws/runtimes`（派生在线状态：60s 内有心跳算在线；删 runtime 自动解绑 agent）。
+- daemon 接口（运行时令牌认证）：`POST /daemon/hello`（上报能力 + 心跳）、`POST /daemon/heartbeat`。
+- agent 增删改支持 `runtimeId` 绑定（校验属本工作空间）。
+
+**前端**
+- 「Runtime 运行时管理」页：列表（在线点 / CLI 能力 / 心跳时间）+ 添加（配对弹窗给命令+令牌+一键复制）+ 删除；15s 轮询刷新在线态。
+- agent 编辑弹窗加「运行时」选择器；agent 列表显示绑定的运行时名。
+
+**说明**：daemon 本体是 **B2b**（Bun/TS 实现：发现本地 Claude Code/Codex/OpenCode → 用令牌 hello/heartbeat 连上来）。这里已把它要用的配对/心跳接口备好。
+
 ## 2026-06-19 · B1 智能体管理 完成
 
 **后端**

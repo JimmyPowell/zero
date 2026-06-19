@@ -8,6 +8,8 @@ import { workspaceRoutes } from "@/routes/workspaces";
 import { issueRoutes } from "@/routes/issues";
 import { repoRoutes } from "@/routes/repos";
 import { agentRoutes } from "@/routes/agents";
+import { runtimeRoutes } from "@/routes/runtimes";
+import { daemonRoutes } from "@/routes/daemon";
 
 const app = new Hono();
 
@@ -28,6 +30,8 @@ app.route("/workspaces", workspaceRoutes);
 app.route("/workspaces/:wsId/issues", issueRoutes);
 app.route("/workspaces/:wsId/repos", repoRoutes);
 app.route("/workspaces/:wsId/agents", agentRoutes);
+app.route("/workspaces/:wsId/runtimes", runtimeRoutes);
+app.route("/daemon", daemonRoutes);
 
 console.log(`Zero server listening on http://localhost:${config.port}`);
 

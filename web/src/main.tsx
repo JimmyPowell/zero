@@ -12,6 +12,7 @@ import { AuthGate } from "@/components/AuthGate";
 import { OverviewView } from "@/views/OverviewView";
 import { IssueDetailView } from "@/views/IssueDetailView";
 import { AgentsView } from "@/views/AgentsView";
+import { RuntimesView } from "@/views/RuntimesView";
 import { PlaceholderView } from "@/views/PlaceholderView";
 import { AuthView } from "@/views/AuthView";
 import { useAuth, restoreAuth } from "@/lib/auth-store";
@@ -59,7 +60,7 @@ const router = createBrowserRouter([
         path: "requirements",
         element: <PlaceholderView titleKey="menu.requirements" />,
       },
-      { path: "runtime", element: <PlaceholderView titleKey="menu.runtime" /> },
+      { path: "runtime", element: <RuntimesView /> },
       { path: "agents", element: <AgentsView /> },
       { path: "*", element: <Navigate to="/overview" replace /> },
     ],

@@ -18,6 +18,7 @@ const createSchema = z.object({
   model: z.string().trim().max(128).optional(),
   instructions: z.string().max(20000).optional(),
   avatarUrl: z.string().trim().max(2000).optional(),
+  runtimeId: z.string().uuid().nullable().optional(),
 });
 
 const updateSchema = z
@@ -27,8 +28,24 @@ const updateSchema = z
     model: z.string().trim().max(128).nullable().optional(),
     instructions: z.string().max(20000).nullable().optional(),
     avatarUrl: z.string().trim().max(2000).nullable().optional(),
+    runtimeId: z.string().uuid().nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, "没有要更新的字段");
+
+// 校验运行时属于本工作空间
+async function runtimeInWorkspace(workspaceId: string, runtimeId: string) {
+  const rows = await db
+    .select({ id: schema.runtime.id })
+    .from(schema.runtime)
+    .where(
+      and(
+        eq(schema.runtime.id, runtimeId),
+        eq(schema.runtime.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
 
 // 同工作空间内名称是否已被别的 agent 占用
 async function nameTaken(workspaceId: string, name: string, exceptId?: string) {
@@ -66,6 +83,9 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
     if (await nameTaken(workspaceId, body.name)) {
       return c.json({ error: "该名称已被占用" }, 409);
     }
+    if (body.runtimeId && !(await runtimeInWorkspace(workspaceId, body.runtimeId))) {
+      return c.json({ error: "运行时不存在" }, 400);
+    }
 
     const id = crypto.randomUUID();
     await db.insert(schema.agent).values({
@@ -76,6 +96,7 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
       model: body.model ?? null,
       instructions: body.instructions ?? null,
       avatarUrl: body.avatarUrl ?? null,
+      runtimeId: body.runtimeId ?? null,
     });
     const [created] = await db
       .select()
@@ -102,6 +123,9 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
     if (patch.name && (await nameTaken(workspaceId, patch.name, id))) {
       return c.json({ error: "该名称已被占用" }, 409);
     }
+    if (patch.runtimeId && !(await runtimeInWorkspace(workspaceId, patch.runtimeId))) {
+      return c.json({ error: "运行时不存在" }, 400);
+    }
 
     await db
       .update(schema.agent)
@@ -113,6 +137,7 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
           ? { instructions: patch.instructions }
           : {}),
         ...(patch.avatarUrl !== undefined ? { avatarUrl: patch.avatarUrl } : {}),
+        ...(patch.runtimeId !== undefined ? { runtimeId: patch.runtimeId } : {}),
       })
       .where(eq(schema.agent.id, id));
 
