@@ -73,6 +73,7 @@ export const issue = mysqlTable(
       "todo",
       "in_progress",
       "in_review",
+      "blocked",
       "done",
       "cancelled",
     ])
@@ -146,6 +147,7 @@ export const issueEvent = mysqlTable(
       "priority_change",
       "assignment",
       // 以下为 Phase B 的 agent 执行事件，先纳入枚举免后续迁移
+      "run_queued",
       "run_started",
       "run_progress",
       "run_finished",

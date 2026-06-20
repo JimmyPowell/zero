@@ -113,6 +113,15 @@ export function Timeline({
   const priorityLabel = (v?: string | null) =>
     v ? t(priorityMeta[v as IssuePriority]?.labelKey ?? v) : "";
 
+  // 有 run_queued 事件的 task：运行卡片从 run_queued 渲染（状态 runs[] 实时取：排队中→执行中→…），
+  // run_started 跳过避免重复；旧 issue 无 run_queued → 仍由 run_started 渲染卡片。
+  const queuedTaskIds = new Set(
+    events
+      .filter((e) => e.kind === "run_queued")
+      .map((e) => (e.meta as { taskId?: string } | null)?.taskId)
+      .filter(Boolean) as string[],
+  );
+
   return (
     <ol className="flex flex-col">
       {events.map((ev) => {
@@ -149,8 +158,12 @@ export function Timeline({
           );
         }
 
-        // run_started：有对应 run 摘要 → 运行卡片（状态 + 统计 + 打开日志）
-        if (ev.kind === "run_started" && meta?.taskId && runs[meta.taskId]) {
+        // 运行卡片（状态/统计/打开日志）：从该 task 的首个运行事件渲染
+        // —— 有 run_queued 用它（能显示"排队中"），否则用 run_started（兼容旧 issue）。
+        const firstRunEvt =
+          ev.kind === "run_queued" ||
+          (ev.kind === "run_started" && !queuedTaskIds.has(meta?.taskId ?? ""));
+        if (firstRunEvt && meta?.taskId && runs[meta.taskId]) {
           return (
             <RunCard
               key={ev.id}
@@ -162,10 +175,13 @@ export function Timeline({
             />
           );
         }
-        // run_finished/run_failed 已被运行卡片覆盖最终状态 → 不重复展示
+        // 已被运行卡片覆盖的后续运行事件 → 不重复展示
         // （no_runtime 这类无 taskId 的失败仍走下方活动行）
         if (
-          (ev.kind === "run_finished" || ev.kind === "run_failed") &&
+          ((ev.kind === "run_started" &&
+            queuedTaskIds.has(meta?.taskId ?? "")) ||
+            ev.kind === "run_finished" ||
+            ev.kind === "run_failed") &&
           meta?.taskId
         ) {
           return null;
@@ -190,6 +206,8 @@ export function Timeline({
           text = to
             ? interp(t("timeline.assigned"), { name: to.name ?? "" })
             : t("timeline.unassigned");
+        } else if (ev.kind === "run_queued") {
+          text = t("timeline.runQueued");
         } else if (ev.kind === "run_started") {
           text = t("timeline.runStarted");
         } else if (ev.kind === "run_finished") {

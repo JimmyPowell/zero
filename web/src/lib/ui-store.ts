@@ -81,6 +81,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "status.todo": "待办",
     "status.in_progress": "进行中",
     "status.in_review": "评审中",
+    "status.blocked": "阻塞",
     "status.done": "已完成",
     "status.cancelled": "已取消",
 
@@ -114,6 +115,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "timeline.priority": "将优先级从 {from} 改为 {to}",
     "timeline.assigned": "指派给 {name}",
     "timeline.unassigned": "取消了指派",
+    "timeline.runQueued": "已加入队列，等待拣选",
     "timeline.runStarted": "开始执行",
     "timeline.runFinished": "执行完成",
     "timeline.runFailed": "执行失败",
@@ -435,6 +437,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "status.in_progress": "In Progress",
     "status.in_review": "In Review",
     "status.done": "Done",
+    "status.blocked": "Blocked",
     "status.cancelled": "Cancelled",
 
     "priority.urgent": "Urgent",
@@ -465,6 +468,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "timeline.priority": "changed priority from {from} to {to}",
     "timeline.assigned": "assigned to {name}",
     "timeline.unassigned": "removed the assignee",
+    "timeline.runQueued": "queued — waiting to be picked up",
     "timeline.runStarted": "started a run",
     "timeline.runFinished": "finished the run",
     "timeline.runFailed": "run failed",

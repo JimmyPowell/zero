@@ -78,6 +78,7 @@ export type IssueStatus =
   | "todo"
   | "in_progress"
   | "in_review"
+  | "blocked"
   | "done"
   | "cancelled";
 
@@ -143,6 +144,7 @@ export type IssueEventKind =
   | "status_change"
   | "priority_change"
   | "assignment"
+  | "run_queued"
   | "run_started"
   | "run_progress"
   | "run_finished"

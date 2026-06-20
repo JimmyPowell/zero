@@ -2,6 +2,14 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 实现：克隆超时 + 状态(阻塞/图标) + 排队中反馈 🎉
+
+落地 `repo-clone-robustness.md` §A + `status-and-queue-ux.md` 两块：
+- **克隆超时（根治"运行时冻死"）**：daemon `git()` 加超时（clone 120s / fetch 30s），超时 kill 子进程 + 清不完整残壳 → 卡死克隆只 fail 一个任务，不再冻住运行时。实测 3s 短超时打 e-zen SSH 被准时杀掉。
+- **状态**：新增 `blocked`（`CircleSlash` 红）；评审中 `CircleDotDashed`→`CirclePause`（区别于进行中实心点）；migration 0016 加性 ALTER 两 enum。**run 失败→issue 自动 blocked**。实测绑无效目录→failed→blocked。
+- **排队中反馈**：`enqueueTaskForIssue` 入队即写 `run_queued` 事件（无需等 5s 轮询）；Timeline 运行卡片从 run_queued 渲染（"排队中"→认领后"执行中"，run_started 跳过不重复）。实测入队 0.6s 即可见。
+- 校验：server/daemon/web typecheck + web build + db:migrate + 三项 e2e 全过。
+
 ## 2026-06-19 · 出方案：provider-aware 技能挂载 ⏳待办
 
 - **问题**：技能物化只写 `.claude/skills` → 只有 claude/codebuddy 生效，codex/opencode/kimi 不生效。

@@ -77,6 +77,16 @@ export async function enqueueTaskForIssue(
     triggerEventId: triggerEventId ?? null,
     sessionId: last?.sessionId ?? null,
   });
+  // 立刻写一条「排队中」时间线事件 —— 否则从入队到 daemon 轮询认领之间前端无反馈
+  await db.insert(schema.issueEvent).values({
+    id: crypto.randomUUID(),
+    issueId,
+    workspaceId: iss.workspaceId,
+    actorType: "agent",
+    actorId: ag.id,
+    kind: "run_queued",
+    meta: { taskId: id },
+  });
   return id;
 }
 

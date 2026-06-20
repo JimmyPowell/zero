@@ -2,7 +2,8 @@ import {
   Circle,
   CircleDashed,
   CircleDot,
-  CircleDotDashed,
+  CirclePause,
+  CircleSlash,
   CircleCheck,
   CircleX,
   Minus,
@@ -26,6 +27,7 @@ export const STATUS_ORDER: IssueStatus[] = [
   "todo",
   "in_progress",
   "in_review",
+  "blocked",
   "done",
   "cancelled",
 ];
@@ -34,7 +36,10 @@ export const statusMeta: Record<IssueStatus, OptionMeta> = {
   backlog: { labelKey: "status.backlog", Icon: CircleDashed, className: "text-muted-foreground" },
   todo: { labelKey: "status.todo", Icon: Circle, className: "text-muted-foreground" },
   in_progress: { labelKey: "status.in_progress", Icon: CircleDot, className: "text-amber-500" },
-  in_review: { labelKey: "status.in_review", Icon: CircleDotDashed, className: "text-violet-500" },
+  // 评审中改用「暂停」形（圈内两竖），明显区别于进行中的「实心点」
+  in_review: { labelKey: "status.in_review", Icon: CirclePause, className: "text-violet-500" },
+  // 阻塞：圈内斜杠，红色，一眼"卡住"
+  blocked: { labelKey: "status.blocked", Icon: CircleSlash, className: "text-rose-500" },
   done: { labelKey: "status.done", Icon: CircleCheck, className: "text-emerald-500" },
   cancelled: { labelKey: "status.cancelled", Icon: CircleX, className: "text-muted-foreground/60" },
 };

@@ -185,6 +185,7 @@ interface Claim {
 async function git(
   args: string[],
   cwd?: string,
+  timeoutMs?: number,
 ): Promise<{ ok: boolean; out: string; err: string }> {
   const proc = Bun.spawn({
     cmd: ["git", ...args],
@@ -194,11 +195,26 @@ async function git(
     stdin: "ignore",
     env: process.env,
   });
+  // 超时则 kill 子进程 —— 关键：否则克隆卡死会无限占住 daemon 槽位、冻住整个运行时
+  let timedOut = false;
+  const timer = timeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        proc.kill(9);
+      }, timeoutMs)
+    : null;
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
+  if (timer) clearTimeout(timer);
+  if (timedOut)
+    return {
+      ok: false,
+      out: out.trim(),
+      err: `git ${args[0]} 超时（${Math.round((timeoutMs ?? 0) / 1000)}s）——网络不通/仓库地址有问题（如 github SSH 22 被墙，可换 HTTPS 或配 ssh.github.com:443）`,
+    };
   return { ok: code === 0, out: out.trim(), err: err.trim() };
 }
 
@@ -227,10 +243,18 @@ async function prepareWorkdir(work: WorkSpec, issueId: string): Promise<string> 
     ensureDir(REPOS_DIR);
     source = join(REPOS_DIR, sanitize(work.repoUrl));
     if (!existsSync(source)) {
-      const r = await git(["clone", work.repoUrl, source]);
-      if (!r.ok) throw new Error(`克隆仓库失败：${r.err || r.out}`);
+      const r = await git(["clone", work.repoUrl, source], undefined, 120_000);
+      if (!r.ok) {
+        // 清掉不完整的残壳，否则下次命中坏缓存
+        try {
+          rmSync(source, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+        throw new Error(`克隆仓库失败：${r.err || r.out}`);
+      }
     } else {
-      await git(["fetch", "--all", "--prune"], source); // best-effort
+      await git(["fetch", "--all", "--prune"], source, 30_000); // best-effort
     }
   } else {
     source = work.repoUrl; // 本地仓库路径

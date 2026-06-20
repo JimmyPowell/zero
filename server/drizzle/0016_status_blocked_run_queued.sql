@@ -1,0 +1,2 @@
+ALTER TABLE `issue` MODIFY COLUMN `status` enum('backlog','todo','in_progress','in_review','blocked','done','cancelled') NOT NULL DEFAULT 'todo';--> statement-breakpoint
+ALTER TABLE `issue_event` MODIFY COLUMN `kind` enum('created','comment','status_change','priority_change','assignment','run_queued','run_started','run_progress','run_finished','run_failed','diff_ready','pr_opened') NOT NULL;

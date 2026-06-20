@@ -501,6 +501,16 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .update(schema.task)
         .set({ status: "failed", finishedAt: new Date(), error: error ?? null })
         .where(eq(schema.task.id, id));
+      // 执行失败 → issue 置「阻塞」（仅在仍活动态时），让失败可见、不停在"进行中"假装在跑
+      await db
+        .update(schema.issue)
+        .set({ status: "blocked" })
+        .where(
+          and(
+            eq(schema.issue.id, tk.issueId),
+            inArray(schema.issue.status, ["todo", "in_progress", "in_review"]),
+          ),
+        );
       publish(id, { __end: true, status: "failed" });
       return c.json({ ok: true });
     },

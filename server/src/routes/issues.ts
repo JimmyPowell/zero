@@ -20,6 +20,7 @@ const statusEnum = z.enum([
   "todo",
   "in_progress",
   "in_review",
+  "blocked",
   "done",
   "cancelled",
 ]);
