@@ -175,6 +175,8 @@ interface Claim {
       baseBranch: string;
     } | null;
     work?: WorkSpec;
+    // 评论附件元数据（已 link）；daemon 据 size 小推（落盘）/大拉（给签名 URL）
+    attachments?: AttachmentMeta[];
     // 续接会话时，前 resumeFromIndex 条评论已在上一轮上下文里（增量推送用）
     resumeFromIndex?: number;
   };
@@ -455,9 +457,84 @@ async function materializeSkills(
   return skills.length;
 }
 
+// 评论附件：小文件落盘「推」给 agent、大文件给签名 URL 让 agent 按需「拉」
+const ATTACH_SMALL_MAX = 10 * 1024 * 1024; // ≤10MB 推，> 懒取
+interface AttachmentMeta {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  signedPath: string;
+}
+interface ResolvedAttachment {
+  filename: string;
+  mime: string;
+  size: number;
+  big: boolean;
+  rel?: string; // 小文件：相对工作目录的路径
+  url?: string; // 大文件：签名下载 URL（curl）
+}
+
+function safeName(name: string): string {
+  return (
+    (name || "file").replace(/[/\\]/g, "_").replace(/^\.+/, "_").slice(0, 200) ||
+    "file"
+  );
+}
+function fmtBytes(n: number): string {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`;
+  if (n >= 1 << 10) return `${Math.round(n / (1 << 10))}KB`;
+  return `${n}B`;
+}
+
+// 小文件落到 <cwd>/.zero/attachments/（按文件名去重、重跑不重下）；大文件不下、留签名 URL。
+// 任一下载失败 → 退化为「懒取」（给 URL），不阻断执行。
+async function materializeAttachments(
+  server: string,
+  cwd: string,
+  atts: AttachmentMeta[],
+): Promise<ResolvedAttachment[]> {
+  const out: ResolvedAttachment[] = [];
+  const dir = join(cwd, ".zero", "attachments");
+  for (const a of atts) {
+    const filename = safeName(a.filename);
+    const url = `${server}${a.signedPath}`;
+    if (a.size > ATTACH_SMALL_MAX) {
+      out.push({ filename, mime: a.mime, size: a.size, big: true, url });
+      continue;
+    }
+    const dest = join(dir, filename);
+    if (!existsSync(dest)) {
+      try {
+        ensureDir(dir);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await Bun.write(dest, await res.arrayBuffer());
+      } catch (err) {
+        console.error(
+          `附件 ${filename} 下载失败，改为懒取：${(err as Error).message}`,
+        );
+        out.push({ filename, mime: a.mime, size: a.size, big: true, url });
+        continue;
+      }
+    }
+    out.push({
+      filename,
+      mime: a.mime,
+      size: a.size,
+      big: false,
+      rel: `.zero/attachments/${filename}`,
+    });
+  }
+  return out;
+}
+
 // opts.full=false 且在续接会话时只渲染增量评论（旧评论已在会话记忆里）；
 // full=true（新会话首跑 / resume 失败回退新会话）渲染全量，避免失忆。
-export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
+export function buildPrompt(
+  claim: Claim,
+  opts: { full: boolean; attachments?: ResolvedAttachment[] },
+): string {
   const { agent, context } = claim;
   const L: string[] = [];
   L.push(`You are "${agent?.name}", an agent on the Zero platform.`);
@@ -496,6 +573,29 @@ export function buildPrompt(claim: Claim, opts: { full: boolean }): string {
     L.push(
       "\n(No repo/dir attached yet — respond with your plan / answer, then a concise summary.)",
     );
+  }
+  // 附件：小文件给工作目录内相对路径，大文件给现成 curl 命令（按需下载）
+  const atts = opts.attachments ?? [];
+  if (atts.length) {
+    L.push("\n## Attached files");
+    const small = atts.filter((a) => !a.big);
+    const big = atts.filter((a) => a.big);
+    if (small.length) {
+      L.push(
+        "Saved under `./.zero/attachments/` — read them as needed (open images with your file/read tool; read large files selectively):",
+      );
+      for (const a of small)
+        L.push(`- ${a.rel}  (${a.mime}, ${fmtBytes(a.size)})`);
+    }
+    if (big.length) {
+      L.push(
+        "Large files (not downloaded, to save space). Download one only if you need it, by running its command:",
+      );
+      for (const a of big)
+        L.push(
+          `- ${a.filename} (${a.mime}, ${fmtBytes(a.size)}) → \`curl -sL '${a.url}' -o '${a.filename}'\``,
+        );
+    }
   }
   return L.join("\n");
 }
@@ -1000,13 +1100,29 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     } catch (err) {
       console.error(`物化技能失败（忽略继续）：${(err as Error).message}`);
     }
+    // 附件：小文件落盘到 .zero/attachments/、大文件留签名 URL（小推大拉）；best-effort
+    let resolvedAtts: ResolvedAttachment[] = [];
+    try {
+      resolvedAtts = await materializeAttachments(
+        server,
+        cwd,
+        claim.context?.attachments ?? [],
+      );
+      const dl = resolvedAtts.filter((a) => !a.big).length;
+      if (resolvedAtts.length)
+        console.log(
+          `附件：落盘 ${dl}、懒取 ${resolvedAtts.length - dl} → ${cwd}/.zero/attachments`,
+        );
+    } catch (err) {
+      console.error(`物化附件失败（忽略继续）：${(err as Error).message}`);
+    }
     // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
     const reporter = makeReporter(async (events) => {
       await post(server, token, `/daemon/tasks/${taskId}/events`, { events });
     });
     // 续接会话 → 只推增量评论（full=false）；新会话首跑 → 全量（full=true）
     let r = await spec.runner(
-      buildPrompt(claim, { full: !priorSession }),
+      buildPrompt(claim, { full: !priorSession, attachments: resolvedAtts }),
       cwd,
       { model, sessionId: priorSession, mcpConfig },
       reporter,
@@ -1016,7 +1132,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     if (!r.ok && priorSession && spec.sessionInvalid.test(r.error ?? "")) {
       console.log(`会话 ${priorSession} 失效，改用新会话重跑（全量上下文）`);
       r = await spec.runner(
-        buildPrompt(claim, { full: true }),
+        buildPrompt(claim, { full: true, attachments: resolvedAtts }),
         cwd,
         { model, mcpConfig },
         reporter,
