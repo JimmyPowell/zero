@@ -83,7 +83,7 @@ const TOOLS = [
   {
     name: "zero_watch_pid",
     description:
-      "Register a background process (by PID) to watch; when it exits you'll be re-invoked to continue THIS issue. Use after starting a long job that must OUTLIVE this run — launch it detached (setsid/nohup/disown) and pass its PID. This run is single-shot; without this you will NOT be called back when the job finishes. (Exit code isn't captured — re-check results yourself on wake.)",
+      "Register a background process (by PID) to watch; when it exits you'll be re-invoked to continue THIS issue. To start a job that OUTLIVES this single-shot run, launch it with the provided `zero-bg` helper (NOT a bare `&`/setsid, which gets killed at run end): `pid=$(zero-bg 'your long command' /tmp/job.log)`, then pass that PID here. Without this you will NOT be called back when the job finishes. (Exit code isn't captured — re-check results/log yourself on wake.)",
     inputSchema: {
       type: "object",
       properties: {

@@ -6,11 +6,17 @@
 > **真机 E2E 验证（2026-06-20，ZERO-18）**:真 claude agent 跑通 **A.1 定时唤醒**完整闭环 ——
 > agent 调 `zero_wake_me(35)` → 结束 run → server sweeper 准时点燃 → **同 session 续跑**、
 > agent 带完整记忆被叫回("我带着完整会话记忆在约 35 秒后被重新拉起")。
-> **但暴露一个限制(影响 A.2 进程看护)**:agent 用 `setsid bash -c '...' &` 起的脱离后台进程
-> **没能在 run 结束后存活**(产物文件没写出、pid 已消失),疑似被 Claude Code 的 Bash 工具/进程组
-> 清理一起回收。结论:`zero_watch_pid` 的前提"后台进程跨 run 存活"在当前环境不成立,
-> 需要更稳的启动方式(见 Phase 2:daemon 提供 `zero-bg` 双 fork/nohup 启动器,或排查 Bash 工具收尾)。
-> A.1(定时唤醒)不依赖外部进程存活,完全可用。
+> **当时暴露一个限制(影响 A.2 进程看护)**:agent 用 `setsid bash -c '...' &` 起的脱离后台进程
+> 没能在 run 结束后存活。根因两点:① **macOS 根本没有 `setsid`**(命令直接失败);② 内联 `&` 会留在
+> Claude Bash 工具的常驻 shell 下,run 结束随进程树被回收。**已修(见下 `zero-bg`)**。
+> A.1(定时唤醒)不依赖外部进程存活,本就完全可用。
+
+> **修复(2026-06-20):`zero-bg` 后台启动器**。daemon 启动时把脚本装到 `~/.zero/bin/zero-bg`
+> 并并入 agent 的 PATH。它是个**独立短命进程**:起好后台子进程、打印 pid 后立即退出 →
+> 子进程**重父到 init**、脱离调用方进程树。优先 `setsid`(Linux)、回退 `nohup`(macOS)。
+> agent 用 `pid=$(zero-bg 'long cmd' /tmp/job.log)` 拿到稳定 pid 交给 `zero_watch_pid`。
+> 隔离测试证实:父 shell 退出后子进程 ppid=1 存活并跑完。`buildPrompt` + 工具描述已指明用它、别用裸 `&`。
+> ⚠️ 现网常驻 daemon 是旧码(非 --watch),**需重启 daemon** 才会装 zero-bg / 启用进程看护循环。
 
 ## 背景:为什么会缺
 
@@ -115,5 +121,5 @@ daemon claim → --resume 92504e29 + 增量上下文(那条系统评论) → age
 
 ## Phase 2(暂不做)
 
-- **后台进程跨 run 存活**(真机 E2E 暴露,A.2 前提):daemon 提供 `zero-bg "<cmd>"` 启动器(双 fork + `nohup` + 重定向,脱离 Claude Bash 工具的进程组),返回稳定 pid 供 `zero_watch_pid`;或排查 run 结束时对子进程组的清理是否误杀 setsid 进程。**A.2 需要这个才真正可用**。
-- 进程退出码/日志尾巴回传、轮询式兜底续跑、运行时级 kill-switch/配额、子代理事件的更细粒度回放、非 Claude provider 的续跑工具(codex/opencode 经各自 MCP;kimi 无原生 MCP 需降级)。
+- ~~后台进程跨 run 存活~~ → **已修**(`zero-bg` 启动器,见上「修复」)。
+- 进程退出码/日志尾巴回传(现在只判"还在不在")、轮询式兜底续跑、运行时级 kill-switch/配额、子代理事件的更细粒度回放、非 Claude provider 的续跑工具(codex/opencode 经各自 MCP;kimi 无原生 MCP 需降级)。

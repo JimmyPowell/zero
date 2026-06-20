@@ -7,6 +7,7 @@
 //       认领 task → 跑 agent（B3.2：Claude Code）→ 回传结果。
 
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -35,14 +36,46 @@ const WORK_DIR = join(ZERO_DIR, "work"); // 空目录模式
 const REPOS_DIR = join(ZERO_DIR, "repos"); // URL 仓库的源 clone 缓存
 const WORKTREES_DIR = join(ZERO_DIR, "worktrees"); // 每个 issue 一棵 worktree
 const MCP_DIR = join(ZERO_DIR, "mcp"); // 每个 issue 一份 MCP 配置（按需拉上下文）
+const BIN_DIR = join(ZERO_DIR, "bin"); // 注入给 agent 的小工具（zero-bg 后台启动器）
 
-// 把 ~/.local/bin 并入 PATH：kimi 等经 uv/pipx 装的 CLI 默认落在这，
-// 否则 Bun.which / 子进程 spawn 找不到。幂等。
+// 把 ~/.local/bin（kimi 等经 uv/pipx 装的 CLI）+ ~/.zero/bin（zero-bg）并入 PATH。幂等。
 {
-  const localBin = join(homedir(), ".local/bin");
+  const extra = [join(homedir(), ".local/bin"), BIN_DIR];
   const parts = (process.env.PATH ?? "").split(":");
-  if (!parts.includes(localBin)) {
-    process.env.PATH = [localBin, process.env.PATH].filter(Boolean).join(":");
+  const add = extra.filter((p) => !parts.includes(p));
+  if (add.length) {
+    process.env.PATH = [...add, process.env.PATH].filter(Boolean).join(":");
+  }
+}
+
+// zero-bg：给 agent 用的「能跨 run 存活」的后台启动器。
+// agent 内联 `setsid ... &` 会留在 Claude Bash 工具的常驻 shell 下、run 结束被回收；
+// 这个脚本是一个独立短命进程：起好 setsid 子进程、打印其 pid 后立即退出 →
+// 子进程随之重父到 init、且在独立会话，不被调用方进程组牵连。供 zero_watch_pid 看护。
+const ZERO_BG_SCRIPT = `#!/usr/bin/env bash
+# zero-bg "<command>" [logfile] —— 启动能在本轮 run 结束后存活的后台进程，打印其 PID。
+# 本脚本是独立短命进程：起好后台子进程、打印 pid 后立即退出 → 子进程重父到 init，
+# 脱离调用方(Claude Bash 工具常驻 shell)的进程树。优先 setsid(Linux)，回退 nohup(macOS 无 setsid)。
+set -u
+cmd="\${1:?usage: zero-bg \\"<command>\\" [logfile]}"
+log="\${2:-/dev/null}"
+if command -v setsid >/dev/null 2>&1; then
+  setsid bash -c "$cmd" </dev/null >>"$log" 2>&1 &
+else
+  nohup bash -c "$cmd" </dev/null >>"$log" 2>&1 &
+fi
+pid=$!
+disown 2>/dev/null || true
+echo "$pid"
+`;
+function installZeroBg(): void {
+  try {
+    ensureDir(BIN_DIR);
+    const p = join(BIN_DIR, "zero-bg");
+    writeFileSync(p, ZERO_BG_SCRIPT);
+    chmodSync(p, 0o755);
+  } catch (err) {
+    console.error(`安装 zero-bg 失败（zero_watch_pid 仍可手动用）：${(err as Error).message}`);
   }
 }
 
@@ -572,7 +605,10 @@ export function buildPrompt(
     "\nOn-demand context tools (MCP) if the above is insufficient: `zero_older_comments` (earlier comments beyond those shown) and `zero_prior_runs` (past runs' status/outcome on this issue). Prefer the context already given; call these only when you need more.",
   );
   L.push(
-    "\nThis run is NON-INTERACTIVE and single-shot: when you end your turn the run ENDS and you are NOT automatically resumed. Do not promise to \"report back in a minute\" or sleep/busy-wait. If you must wait for something and then continue, schedule a callback BEFORE ending: `zero_wake_me(after_sec, note)` to be re-invoked after a delay, or `zero_watch_pid(pid, note)` to be re-invoked when a detached background process exits (launch it with setsid/nohup so it outlives this run). You resume with full session memory.",
+    "\nThis run is NON-INTERACTIVE and single-shot: when you end your turn the run ENDS and you are NOT automatically resumed. Do not promise to \"report back in a minute\" or sleep/busy-wait. If you must wait for something and then continue, schedule a callback BEFORE ending: `zero_wake_me(after_sec, note)` to be re-invoked after a delay, or `zero_watch_pid(pid, note)` to be re-invoked when a long background job finishes. You resume with full session memory.",
+  );
+  L.push(
+    "IMPORTANT for background jobs that must outlive this run: do NOT use a bare `&`/`setsid` in your shell (it stays tied to this session and gets killed when the run ends). Instead launch via the provided `zero-bg` helper, which fully detaches the process and prints its PID:  `pid=$(zero-bg 'your long command' /tmp/job.log)`  — then pass that `$pid` to `zero_watch_pid`.",
   );
   const work = context?.work;
   if (work?.mode === "repo") {
@@ -1182,6 +1218,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
 async function worker() {
   process.on("SIGHUP", () => {});
   ensureDir(WORK_DIR);
+  installZeroBg(); // 装好 agent 用的后台启动器（zero_watch_pid 依赖它跨 run 存活）
   const { server, token } = requireConn();
   const caps = discover();
   console.log(`[${new Date().toISOString()}] Zero daemon → ${server}`);
