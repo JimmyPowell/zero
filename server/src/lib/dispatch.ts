@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { signAttachmentPath } from "@/lib/storage";
 
 // 把一个 issue 派发给它指派的 agent（满足条件则建一条 queued task）
 // 返回新建的 taskId，或 null（不满足/已去重）
@@ -208,6 +209,19 @@ export async function assembleContext(
     }
   }
 
+  // 该 issue 的附件（已 link 到评论的）；daemon 据 size 决定小推/大拉，
+  // signedPath 拼上 server 基址即可拉取（签名鉴权，不需令牌）
+  const attachments = await db
+    .select({
+      id: schema.attachment.id,
+      filename: schema.attachment.filename,
+      mime: schema.attachment.mime,
+      size: schema.attachment.sizeBytes,
+    })
+    .from(schema.attachment)
+    .where(eq(schema.attachment.issueId, issueId))
+    .orderBy(asc(schema.attachment.createdAt));
+
   return {
     issue: {
       number: iss.number,
@@ -223,6 +237,13 @@ export async function assembleContext(
     })),
     repo,
     work,
+    attachments: attachments.map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      mime: a.mime,
+      size: a.size,
+      signedPath: signAttachmentPath(a.id, 7200),
+    })),
     // daemon: resume 那轮只渲染 comments.slice(resumeFromIndex)；新会话/回退渲染全量
     resumeFromIndex,
   };

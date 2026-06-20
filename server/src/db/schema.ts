@@ -165,6 +165,37 @@ export const issueEvent = mysqlTable(
   (t) => [index("idx_issue_event_issue").on(t.issueId, t.createdAt)],
 );
 
+// 评论附件：先上传（issueEventId 空），发评论时按 attachmentIds 关联到该评论。
+// 随 issue/评论级联删除；存储 storageKey 指向 ATTACHMENTS_DIR 下的相对路径。
+export const attachment = mysqlTable(
+  "attachment",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    issueId: char("issue_id", { length: 36 }).references(() => issue.id, {
+      onDelete: "cascade",
+    }),
+    issueEventId: char("issue_event_id", { length: 36 }).references(
+      () => issueEvent.id,
+      { onDelete: "cascade" },
+    ),
+    uploaderType: mysqlEnum("uploader_type", ["member", "agent"]).notNull(),
+    uploaderId: char("uploader_id", { length: 36 }),
+    filename: varchar("filename", { length: 512 }).notNull(),
+    mime: varchar("mime", { length: 128 }).notNull(),
+    sizeBytes: int("size_bytes").notNull(),
+    storageKey: varchar("storage_key", { length: 512 }).notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_attachment_issue").on(t.issueId),
+    index("idx_attachment_event").on(t.issueEventId),
+  ],
+);
+export type Attachment = typeof attachment.$inferSelect;
+
 // 智能体（AI 队友）：一份配置，可指派给 issue、（B2）绑定到运行时执行
 export const agent = mysqlTable(
   "agent",

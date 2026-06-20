@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { and, asc, desc, eq, gt, like, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, like, or, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { requireAuth } from "@/middleware/auth";
@@ -14,6 +14,7 @@ import { getMembership } from "@/lib/access";
 import { enqueueTaskForIssue } from "@/lib/dispatch";
 import { subscribe } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
+import { signAttachmentPath } from "@/lib/storage";
 
 const statusEnum = z.enum([
   "backlog",
@@ -54,9 +55,31 @@ const updateSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, "没有要更新的字段");
 
-const commentSchema = z.object({
-  body: z.string().trim().min(1, "评论不能为空").max(20000),
-});
+const commentSchema = z
+  .object({
+    body: z.string().trim().max(20000).optional().default(""),
+    attachmentIds: z.array(z.string().uuid()).max(20).optional(),
+  })
+  .refine(
+    (o) => (o.body?.length ?? 0) > 0 || (o.attachmentIds?.length ?? 0) > 0,
+    "评论内容或附件至少要有一个",
+  );
+
+// 把一批附件元数据映射成带签名 url 的对外形态
+function attachmentDTO(a: {
+  id: string;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+}) {
+  return {
+    id: a.id,
+    filename: a.filename,
+    mime: a.mime,
+    size: a.sizeBytes,
+    url: signAttachmentPath(a.id, 86400),
+  };
+}
 
 // 统一的 issue 查询列：指派人(member|agent)与绑定仓库都解析出来
 const issueColumns = {
@@ -545,6 +568,19 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       .where(eq(schema.issueEvent.issueId, id))
       .orderBy(asc(schema.issueEvent.createdAt));
 
+    // 该 issue 各评论的附件，按 issueEventId 归组
+    const atts = await db
+      .select()
+      .from(schema.attachment)
+      .where(eq(schema.attachment.issueId, id));
+    const attByEvent = new Map<string, ReturnType<typeof attachmentDTO>[]>();
+    for (const a of atts) {
+      if (!a.issueEventId) continue;
+      const arr = attByEvent.get(a.issueEventId) ?? [];
+      arr.push(attachmentDTO(a));
+      attByEvent.set(a.issueEventId, arr);
+    }
+
     return c.json({
       events: rows.map((r) => ({
         id: r.id,
@@ -561,6 +597,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
                 avatarUrl: r.agentAvatar ?? r.memberAvatar,
               }
             : null,
+        attachments: attByEvent.get(r.id) ?? [],
       })),
     });
   })
@@ -569,7 +606,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     const workspaceId = c.get("workspaceId");
     const { sub } = c.get("user");
     const id = c.req.param("id");
-    const { body } = c.req.valid("json");
+    const { body, attachmentIds } = c.req.valid("json");
 
     const [exists] = await db
       .select({ id: schema.issue.id })
@@ -588,10 +625,30 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       actorType: "member",
       actorId: sub,
       kind: "comment",
-      body,
+      body: body || null,
     });
 
-    // 人在 agent-assigned issue 下评论 → 触发该 agent 继续执行
+    // 关联本工作空间内、尚未 link 的附件到该评论（再查回拿到对外 DTO）
+    let attachments: ReturnType<typeof attachmentDTO>[] = [];
+    if (attachmentIds?.length) {
+      await db
+        .update(schema.attachment)
+        .set({ issueId: id, issueEventId: eventId })
+        .where(
+          and(
+            inArray(schema.attachment.id, attachmentIds),
+            eq(schema.attachment.workspaceId, workspaceId),
+            isNull(schema.attachment.issueEventId),
+          ),
+        );
+      const linked = await db
+        .select()
+        .from(schema.attachment)
+        .where(eq(schema.attachment.issueEventId, eventId));
+      attachments = linked.map(attachmentDTO);
+    }
+
+    // 人在 agent-assigned issue 下评论 → 触发该 agent 继续执行（此时附件已 link，上下文能带上）
     await enqueueTaskForIssue(id, eventId);
 
     const me = await memberLabel(sub);
@@ -600,10 +657,11 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         event: {
           id: eventId,
           kind: "comment",
-          body,
+          body: body || null,
           meta: null,
           createdAt: new Date(),
           actor: me ? { ...me, avatarUrl: null } : null,
+          attachments,
         },
       },
       201,
