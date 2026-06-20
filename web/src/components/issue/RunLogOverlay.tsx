@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Copy, Filter, X, Check, ChevronRight } from "lucide-react";
+import { Copy, Filter, X, Check, ChevronRight, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -184,6 +184,7 @@ export function RunLogOverlay({
   const [status, setStatus] = useState<RunStatus>(run.status);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [copied, setCopied] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -307,6 +308,19 @@ export function RunLogOverlay({
 
   const duration = fmtDuration(run);
   const pill = STATUS_PILL[status];
+
+  async function cancelRun() {
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      await api.cancelRun(workspaceId, issueId, run.taskId);
+      // 服务端已即时置 cancelled；乐观收尾（SSE 也会发 __end(cancelled)）
+      setStatus("cancelled");
+      onFinished?.();
+    } catch {
+      setCancelling(false);
+    }
+  }
 
   async function copyAll() {
     const text = events
@@ -463,6 +477,17 @@ export function RunLogOverlay({
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {ACTIVE(status) && (
+            <button
+              type="button"
+              onClick={cancelRun}
+              disabled={cancelling}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-rose-600 transition-colors hover:bg-rose-500/10 disabled:opacity-50 dark:text-rose-400"
+            >
+              <Square className="size-3.5 fill-current" />
+              {cancelling ? t("runlog.stopping") : t("runlog.stop")}
+            </button>
+          )}
           <button
             type="button"
             onClick={copyAll}

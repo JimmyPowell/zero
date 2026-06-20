@@ -28,6 +28,7 @@ import { makeReporter, type Reporter } from "./reporter";
 const HEARTBEAT_MS = 20_000;
 const CLAIM_MS = 5_000;
 const WATCH_MS = 5_000; // 进程看护探活周期（自触发续跑）
+const CANCEL_POLL_MS = 3_000; // 跑任务期间轮询「是否被取消」的周期
 const PICKER_PORT = 8799; // 本地文件夹选择器（仅 127.0.0.1）
 const ZERO_DIR = join(homedir(), ".zero");
 const PID_FILE = join(ZERO_DIR, "daemon.pid");
@@ -657,7 +658,12 @@ async function runClaudeLike(
   bin: string,
   prompt: string,
   cwd: string,
-  opts: { model?: string | null; sessionId?: string | null; mcpConfig?: string },
+  opts: {
+    model?: string | null;
+    sessionId?: string | null;
+    mcpConfig?: string;
+    signal?: AbortSignal;
+  },
   reporter: Reporter,
 ): Promise<{
   ok: boolean;
@@ -690,6 +696,7 @@ async function runClaudeLike(
     stdout: "pipe",
     stderr: "pipe",
     cwd,
+    signal: opts.signal, // 取消时杀子进程
     env: process.env,
   });
 
@@ -781,6 +788,8 @@ type RunOpts = {
   model?: string | null;
   sessionId?: string | null;
   mcpConfig?: string;
+  // 取消任务：abort 时杀掉 agent 子进程（Bun.spawn 原生支持 signal）
+  signal?: AbortSignal;
 };
 type Runner = (
   prompt: string,
@@ -831,6 +840,7 @@ async function runCodex(
     stderr: "pipe",
     cwd,
     env: process.env, // 透传代理等 env
+    signal: opts.signal, // 取消时杀子进程
   });
 
   let result = "";
@@ -909,6 +919,7 @@ async function runOpenCode(
     stderr: "pipe",
     cwd,
     env: { ...process.env, OPENCODE_PERMISSION: '{"*":"allow"}' },
+    signal: opts.signal, // 取消时杀子进程
   });
 
   let result = "";
@@ -1005,6 +1016,7 @@ async function runKimi(
     stderr: "pipe",
     cwd,
     env: process.env,
+    signal: opts.signal, // 取消时杀子进程
   });
 
   let result = "";
@@ -1120,6 +1132,23 @@ async function executeClaim(server: string, token: string, claim: Claim) {
   const priorSession = claim.task!.sessionId;
   const title = claim.context?.issue.title ?? "";
   console.log(`认领任务 ${taskId}（${title}）· 在跑 ${running}/${maxConcurrency}`);
+  // 取消支持：每 3s 轮询本任务状态，被取消则 abort（Bun.spawn 据 signal 杀 agent 子进程）。
+  const ac = new AbortController();
+  const cancelPoller = setInterval(async () => {
+    try {
+      const res = await fetch(`${server}/daemon/tasks/${taskId}/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const { status } = (await res.json()) as { status?: string };
+      if (status === "cancelled" && !ac.signal.aborted) {
+        console.log(`任务 ${taskId} 被取消，终止 agent`);
+        ac.abort();
+      }
+    } catch {
+      /* 轮询失败忽略，下一拍再来 */
+    }
+  }, CANCEL_POLL_MS);
   try {
     // 按 agent.provider 选 runner（claude_code / codex / opencode）
     const provider = claim.agent?.provider ?? "";
@@ -1179,22 +1208,33 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     let r = await spec.runner(
       buildPrompt(claim, { full: !priorSession, attachments: resolvedAtts }),
       cwd,
-      { model, sessionId: priorSession, mcpConfig },
+      { model, sessionId: priorSession, mcpConfig, signal: ac.signal },
       reporter,
     );
     let usage = r.usage ?? null;
-    // 会话失效（换目录/过期/被删）→ 新会话重跑：必须用全量 prompt（新会话无记忆），否则失忆
-    if (!r.ok && priorSession && spec.sessionInvalid.test(r.error ?? "")) {
+    // 会话失效（换目录/过期/被删）→ 新会话重跑：必须用全量 prompt（新会话无记忆），否则失忆。
+    // 但若是被取消（abort），不重跑。
+    if (
+      !r.ok &&
+      !ac.signal.aborted &&
+      priorSession &&
+      spec.sessionInvalid.test(r.error ?? "")
+    ) {
       console.log(`会话 ${priorSession} 失效，改用新会话重跑（全量上下文）`);
       r = await spec.runner(
         buildPrompt(claim, { full: true, attachments: resolvedAtts }),
         cwd,
-        { model, mcpConfig },
+        { model, mcpConfig, signal: ac.signal },
         reporter,
       );
       usage = mergeUsage(usage, r.usage ?? null); // 累计两次执行成本
     }
     await reporter.flush(); // 收尾，确保尾部事件全部送达
+    // 被取消：服务端已把 task 置 cancelled，不要用 complete/fail 覆盖它
+    if (ac.signal.aborted) {
+      console.log(`任务 ${taskId} 已取消（不回报结果）`);
+      return;
+    }
     if (r.ok) {
       await post(server, token, `/daemon/tasks/${taskId}/complete`, {
         summary: r.result,
@@ -1209,13 +1249,18 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       console.log(`任务 ${taskId} 失败：${r.error}`);
     }
   } catch (err) {
-    try {
-      await post(server, token, `/daemon/tasks/${taskId}/fail`, {
-        error: (err as Error).message,
-      });
-    } catch {
-      /* 上报失败也忽略 */
+    // 被取消导致的异常（杀子进程）不当作失败回报 —— 服务端已置 cancelled
+    if (!ac.signal.aborted) {
+      try {
+        await post(server, token, `/daemon/tasks/${taskId}/fail`, {
+          error: (err as Error).message,
+        });
+      } catch {
+        /* 上报失败也忽略 */
+      }
     }
+  } finally {
+    clearInterval(cancelPoller); // 所有退出路径都停掉取消轮询
   }
 }
 

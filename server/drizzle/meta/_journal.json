@@ -141,6 +141,13 @@
       "when": 1781944441589,
       "tag": "0019_run_event_subagent",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1781952629565,
+      "tag": "0020_run_cancelled_kind",
+      "breakpoints": true
     }
   ]
 }

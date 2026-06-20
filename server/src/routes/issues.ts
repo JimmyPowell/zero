@@ -12,7 +12,7 @@ import {
 } from "@/middleware/workspace";
 import { getMembership } from "@/lib/access";
 import { enqueueTaskForIssue } from "@/lib/dispatch";
-import { subscribe } from "@/lib/run-bus";
+import { subscribe, publish } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
 import { signAttachmentPath } from "@/lib/storage";
 
@@ -704,6 +704,67 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         toolCallCount: Number(r.toolCallCount),
       })),
     });
+  })
+  // 取消一次 run（停止任务）：仅 queued/running 时置 task=cancelled，写 run_cancelled 时间线，
+  // 连带取消该 issue 待触发的自唤醒，并通知 SSE 收尾。issue 状态保持不变（既定决策）。
+  // 真正杀 agent 子进程由 daemon 轮询 /daemon/tasks/:id/status 看到 cancelled 后硬杀（pull 模型）。
+  .post("/:id/runs/:taskId/cancel", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const id = c.req.param("id");
+    const taskId = c.req.param("taskId");
+    const [tk] = await db
+      .select({ status: schema.task.status })
+      .from(schema.task)
+      .where(
+        and(
+          eq(schema.task.id, taskId),
+          eq(schema.task.issueId, id),
+          eq(schema.task.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    if (!tk) return c.json({ error: "运行不存在" }, 404);
+    if (tk.status !== "queued" && tk.status !== "running")
+      return c.json({ ok: true, alreadyTerminal: true, status: tk.status });
+
+    // 条件更新：仅在仍 queued/running 时置 cancelled（避免覆盖刚好完成/失败的）
+    const res = await db
+      .update(schema.task)
+      .set({ status: "cancelled", finishedAt: new Date() })
+      .where(
+        and(
+          eq(schema.task.id, taskId),
+          inArray(schema.task.status, ["queued", "running"]),
+        ),
+      );
+    const header = Array.isArray(res) ? res[0] : res;
+    if ((header as { affectedRows?: number })?.affectedRows !== 1)
+      return c.json({ ok: true, alreadyTerminal: true });
+
+    // 时间线：run_cancelled（actor = 发起取消的成员）
+    await db.insert(schema.issueEvent).values({
+      id: crypto.randomUUID(),
+      issueId: id,
+      workspaceId,
+      actorType: "member",
+      actorId: sub,
+      kind: "run_cancelled",
+      meta: { taskId },
+    });
+    // 连带取消该 issue 待触发的自唤醒（停就停干净）
+    await db
+      .update(schema.agentWakeup)
+      .set({ status: "cancelled", firedAt: new Date() })
+      .where(
+        and(
+          eq(schema.agentWakeup.issueId, id),
+          eq(schema.agentWakeup.status, "pending"),
+        ),
+      );
+    // 通知订阅中的 SSE 立即收尾（执行日志面板即时显示已取消）
+    publish(taskId, { __end: true, status: "cancelled" });
+    return c.json({ ok: true, status: "cancelled" });
   })
   // 某次 run 的细粒度事件（历史回放）；after 用于增量拉取
   .get("/:id/runs/:taskId/events", async (c) => {
