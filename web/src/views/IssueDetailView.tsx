@@ -10,6 +10,7 @@ import { AssigneePicker } from "@/components/issue/AssigneePicker";
 import { BindingPicker } from "@/components/issue/BindingPicker";
 import { Timeline } from "@/components/issue/Timeline";
 import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
+import { DescriptionField } from "@/components/issue/DescriptionField";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import { issuesActions } from "@/lib/issues-store";
@@ -65,7 +66,6 @@ export function IssueDetailView() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [editTitle, setEditTitle] = useState("");
-  const [editDesc, setEditDesc] = useState("");
   const [comment, setComment] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -84,7 +84,6 @@ export function IssueDetailView() {
         if (!alive) return;
         setIssue(d.issue);
         setEditTitle(d.issue.title);
-        setEditDesc(d.issue.description ?? "");
         setEvents(e.events);
         setRuns(r.runs);
         setMembers(m.members);
@@ -134,7 +133,6 @@ export function IssueDetailView() {
     } catch {
       if (issue) {
         setEditTitle(issue.title);
-        setEditDesc(issue.description ?? "");
       }
     }
   }
@@ -225,15 +223,13 @@ export function IssueDetailView() {
               }}
               className="w-full bg-transparent text-xl font-semibold tracking-tight text-foreground outline-none placeholder:text-muted-foreground/60"
             />
-            <textarea
-              value={editDesc}
-              onChange={(e) => setEditDesc(e.target.value)}
-              onBlur={() => {
-                if (editDesc !== (issue.description ?? ""))
-                  void patch({ description: editDesc || null });
-              }}
+            <DescriptionField
+              value={issue.description ?? ""}
               placeholder={t("detail.descPh")}
-              className="mt-2 min-h-[60px] w-full resize-none bg-transparent text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60"
+              onSave={(v) => {
+                if (v !== (issue.description ?? ""))
+                  void patch({ description: v || null });
+              }}
             />
 
             <div className="my-5 h-px bg-border" />
