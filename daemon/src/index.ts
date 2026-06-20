@@ -264,11 +264,9 @@ function sanitize(s: string): string {
 
 // 变更可视化：拍一个快照引用（含未提交/未跟踪，不改工作树）。
 // stash create 有改动时返回快照 commit；干净时退回 HEAD；非 git 仓库返回 null。
-async function snapshotRef(cwd: string): Promise<string | null> {
-  const head = await git(["rev-parse", "HEAD"], cwd);
-  if (!head.ok) return null;
-  const stash = await git(["stash", "create", "-u"], cwd);
-  return (stash.ok && stash.out) || head.out || null;
+async function gitHead(cwd: string): Promise<string | null> {
+  const r = await git(["rev-parse", "HEAD"], cwd);
+  return r.ok && r.out ? r.out : null;
 }
 
 type FileChange = {
@@ -282,11 +280,15 @@ type FileChange = {
 
 // 算 baseline → 当前 的改动（每文件 ±行/状态 + 逐文件 unified patch）。best-effort，失败返回 null。
 async function captureChanges(cwd: string, baseline: string) {
-  const end = (await snapshotRef(cwd)) ?? "HEAD";
   const Q = ["-c", "core.quotePath=false"];
-  const ns = await git([...Q, "diff", "--numstat", baseline, end], cwd);
-  if (!ns.ok) return null;
-  const st = await git([...Q, "diff", "--name-status", baseline, end], cwd);
+  // 让未跟踪新文件在 diff 里现形（intent-to-add，不改文件内容）；完事 git reset 清掉
+  await git(["add", "-A", "-N"], cwd);
+  const ns = await git([...Q, "diff", "-M", "--numstat", baseline], cwd);
+  if (!ns.ok) {
+    await git(["reset", "-q"], cwd);
+    return null;
+  }
+  const st = await git([...Q, "diff", "-M", "--name-status", baseline], cwd);
   const statusMap = new Map<string, FileChange["status"]>();
   for (const line of st.out.split("\n")) {
     const tab = line.indexOf("\t");
@@ -319,9 +321,10 @@ async function captureChanges(cwd: string, baseline: string) {
   // 逐文件取 patch（二进制跳过；单文件超 200KB 留空，前端可后续懒取）
   for (const f of files) {
     if (f.isBinary) continue;
-    const p = await git([...Q, "diff", baseline, end, "--", f.path], cwd);
+    const p = await git([...Q, "diff", "-M", baseline, "--", f.path], cwd);
     if (p.ok && p.out.length <= 200_000) f.patch = p.out;
   }
+  await git(["reset", "-q"], cwd); // 清掉 intent-to-add，不改工作树
   const head = await git(["rev-parse", "HEAD"], cwd);
   return {
     files,
@@ -1210,7 +1213,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       return;
     }
     // 变更可视化：拍 run 开始的快照基线（非 git 目录返回 null，结束时据此 diff 出本次改动）
-    const baselineSha = await snapshotRef(cwd).catch(() => null);
+    const baselineSha = await gitHead(cwd).catch(() => null);
     const model = claim.agent?.model ?? null;
     // MCP 仅 claude（按需回拉更深上下文）；codex/opencode 走 prompt 内推送的上下文
     const mcpConfig = spec.mcp
