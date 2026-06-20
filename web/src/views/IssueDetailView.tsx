@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Paperclip, X } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { issueKey } from "@/lib/issue-meta";
 import { relativeTime } from "@/lib/time";
 import {
   api,
+  type Attachment,
   type IssueDetail,
   type IssueEvent,
   type Member,
@@ -24,6 +25,12 @@ import {
   type RunSummary,
   type UpdateIssuePayload,
 } from "@/lib/api-client";
+
+function fmtSize(n: number): string {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`;
+  if (n >= 1 << 10) return `${Math.round(n / (1 << 10))}KB`;
+  return `${n}B`;
+}
 
 function PropRow({
   label,
@@ -68,6 +75,8 @@ export function IssueDetailView() {
   const [editDesc, setEditDesc] = useState("");
   const [comment, setComment] = useState("");
   const [posting, setPosting] = useState(false);
+  const [pending, setPending] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (!wsId || !id) return;
@@ -141,16 +150,40 @@ export function IssueDetailView() {
 
   async function postComment() {
     const body = comment.trim();
-    if (!body || !wsId || !issue || posting) return;
+    if ((!body && pending.length === 0) || !wsId || !issue || posting) return;
     setPosting(true);
     try {
-      const { event } = await api.addComment(wsId, issue.id, body);
+      const { event } = await api.addComment(
+        wsId,
+        issue.id,
+        body,
+        pending.map((p) => p.id),
+      );
       setEvents((prev) => [...prev, event]);
       setComment("");
+      setPending([]);
       // 评论可能触发了 agent 执行 → 拉取最新运行卡片（并启动轮询）
       await refresh();
     } finally {
       setPosting(false);
+    }
+  }
+
+  // 选文件即上传，拿到 id 进待发列表（提交评论时一起 link）
+  async function onPickFiles(files: FileList | null) {
+    if (!files || !files.length || !wsId) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        try {
+          const { attachment } = await api.uploadAttachment(wsId, file);
+          setPending((prev) => [...prev, attachment]);
+        } catch {
+          /* 单个失败忽略，继续传其余 */
+        }
+      }
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -247,6 +280,34 @@ export function IssueDetailView() {
 
             {/* 评论输入 */}
             <div className="mt-4">
+              {/* 待发附件 chip */}
+              {pending.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {pending.map((a) => (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-xs"
+                    >
+                      <Paperclip className="size-3 text-muted-foreground" />
+                      <span className="max-w-[160px] truncate text-foreground">
+                        {a.filename}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {fmtSize(a.size)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPending((p) => p.filter((x) => x.id !== a.id))
+                        }
+                        className="text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -257,10 +318,27 @@ export function IssueDetailView() {
                 placeholder={t("detail.commentPh")}
                 className="min-h-[72px] w-full resize-none rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-active-fg"
               />
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex items-center justify-between">
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
+                  <Paperclip className="size-3.5" />
+                  {uploading ? t("detail.uploading") : t("detail.attach")}
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      void onPickFiles(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
                 <Button
                   size="sm"
-                  disabled={!comment.trim() || posting}
+                  disabled={
+                    (!comment.trim() && pending.length === 0) ||
+                    posting ||
+                    uploading
+                  }
                   onClick={postComment}
                   className="bg-[#2563eb] text-white hover:bg-[#2563eb]/90"
                 >

@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Paperclip } from "lucide-react";
 
 import { ActorAvatar } from "@/components/ActorAvatar";
 import { Markdown } from "@/components/Markdown";
@@ -6,7 +6,9 @@ import { useUi } from "@/lib/ui-store";
 import { relativeTime } from "@/lib/time";
 import { statusMeta, priorityMeta } from "@/lib/issue-meta";
 import { cn } from "@/lib/utils";
+import { attachmentUrl } from "@/lib/api-client";
 import type {
+  Attachment,
   IssueEvent,
   IssueStatus,
   IssuePriority,
@@ -14,6 +16,42 @@ import type {
   RunStatus,
   RunSummary,
 } from "@/lib/api-client";
+
+function fmtSize(n: number): string {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`;
+  if (n >= 1 << 10) return `${Math.round(n / (1 << 10))}KB`;
+  return `${n}B`;
+}
+
+// 评论里的附件：图片显缩略图、其它显可下载 chip
+function AttachmentChip({ att }: { att: Attachment }) {
+  const href = attachmentUrl(att.url);
+  if (att.mime.startsWith("image/")) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className="block">
+        <img
+          src={href}
+          alt={att.filename}
+          className="max-h-44 max-w-[220px] rounded-lg border border-border object-cover"
+        />
+      </a>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs transition-colors hover:bg-sidebar-accent"
+    >
+      <Paperclip className="size-3.5 text-muted-foreground" />
+      <span className="max-w-[180px] truncate text-foreground">
+        {att.filename}
+      </span>
+      <span className="text-muted-foreground">{fmtSize(att.size)}</span>
+    </a>
+  );
+}
 
 function interp(s: string, vars: Record<string, string>): string {
   return s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
@@ -151,7 +189,19 @@ export function Timeline({
                   <span className="text-xs text-muted-foreground">{time}</span>
                 </div>
                 <div className="mt-1.5 rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground">
-                  <Markdown>{ev.body ?? ""}</Markdown>
+                  {ev.body && <Markdown>{ev.body}</Markdown>}
+                  {ev.attachments && ev.attachments.length > 0 && (
+                    <div
+                      className={cn(
+                        "flex flex-wrap gap-2",
+                        ev.body && "mt-2",
+                      )}
+                    >
+                      {ev.attachments.map((a) => (
+                        <AttachmentChip key={a.id} att={a} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </li>
