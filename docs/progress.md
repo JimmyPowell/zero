@@ -2,10 +2,25 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 合并导航重构 + 需求看板（feat/nav-board → main）🎉
+
+- **侧边栏**：删"概览"+空"需求管理" → 合并为落地页「我的需求」(`/requirements`)；分个人区/平台区 + 分组小标题；标签清理（运行时/智能体/新建需求）。
+- **需求看板**：需求页加 列表⟷看板 切换（持久化）；看板按 `STATUS_ORDER` 分列（自动含新加的 `blocked` 列）、列头/卡片复用 `statusMeta`/`priorityMeta`；跨列拖拽=改状态（走现成 PATCH，写 status_change）。新依赖 `@dnd-kit/core`。
+- **合并**：仅 `progress.md` 冲突（双方都加顶部条目，保留两边）；`main.tsx`/`Layout.tsx`/`ui-store.ts` 等干净 auto-merge；删 `OverviewView`/`PlaceholderView` 无残留引用。`bun install` 装 dnd-kit。typecheck + build 全过。
+- **Phase 3 未做**（留待）：列内拖拽排序（需 issue 加 `position` 字段+迁移）、过滤 tab/排序/隐藏列。
+
 ## 2026-06-20 · ⏳待办：执行日志顶部活动条带视觉优化
 
 - **现状**：`RunLogOverlay` 顶部活动条已修过高度(16px)、改连续条、加饱和、去药丸端。但用户对比 Multica 后仍觉得**区分度/观感不够好**（事件多时段太细、配色和分段质感不如 Multica）。
 - **暂不改**，记下来等有空再针对性打磨。方向参考：① 事件过多时按上限**合并/采样**成更粗的段（而非硬塞 147 段）；② 配色更贴近 Multica 的具体色调与分段质感；③ 也许给段间留极细分隔或微圆角找平衡。涉及文件 `web/src/components/issue/RunLogOverlay.tsx`（`BAR_COLOR`/`buildSegments`/条带渲染）。
+## 2026-06-20 · 实现：导航重构 + 需求看板（分支 feat/nav-board）🎉
+
+落地 [nav-and-board.md](./nav-and-board.md)，纯前端 UI/路由层：
+- **侧边栏**：删「概览」+ 空占位「需求管理」，合并为落地页「我的需求」(`/requirements`)；分 个人区 + 平台区（智能体/运行时/技能库）两段并加分组小标题；标签清理（运行时 / 智能体 / 新建需求）。保留磨砂底色、设置钉底、折叠开关。
+- **需求页**：新增 列表 ⟷ 看板 切换（持久化 `zero-view-mode`）。看板按 7 状态分列，列头/卡片复用 `statusMeta`/`priorityMeta`；**跨列拖拽 = 改状态**，走现成 PATCH（自动写 `status_change` 时间线）+ 乐观更新/回滚。新增依赖 `@dnd-kit/core`。
+- 路由：`/`、`/overview` → `/requirements`；`OverviewView`→`RequirementsView`；删 `PlaceholderView`。
+- 校验：web typecheck + build 全过。commit：`b24f26b`(侧栏) + `049fd17`(看板)。
+- **待办 Phase 3**：列内拖拽排序需给 `issue` 表加 `position` 字段；过滤 tab / 排序 / 隐藏列。
 
 ## 2026-06-20 · 实现：克隆超时 + 状态(阻塞/图标) + 排队中反馈 🎉
 

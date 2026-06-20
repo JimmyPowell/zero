@@ -2,14 +2,17 @@ import { useSyncExternalStore } from "react";
 
 export type Theme = "light" | "dark" | "system";
 export type Locale = "zh" | "en";
+export type ViewMode = "list" | "board";
 
 const messages: Record<Locale, Record<string, string>> = {
   zh: {
     brand: "Zero",
-    "menu.overview": "概览",
-    "menu.requirements": "需求管理",
-    "menu.runtime": "Runtime 运行时管理",
-    "menu.agents": "智能体管理",
+    "menu.requirements": "我的需求",
+    "menu.runtime": "运行时",
+    "menu.agents": "智能体",
+    "menu.group.platform": "平台",
+    "view.list": "列表",
+    "view.board": "看板",
     "workspace.placeholder": "主工作区（占位）",
     collapse: "收起侧边栏",
     expand: "展开侧边栏",
@@ -51,7 +54,7 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // 侧边栏动作
     "nav.search": "搜索…",
-    "nav.newIssue": "新建 issue",
+    "nav.newIssue": "新建需求",
 
     // 搜索
     "search.placeholder": "搜索 issue…",
@@ -369,10 +372,12 @@ const messages: Record<Locale, Record<string, string>> = {
   },
   en: {
     brand: "Zero",
-    "menu.overview": "Overview",
     "menu.requirements": "Requirements",
     "menu.runtime": "Runtime",
     "menu.agents": "Agents",
+    "menu.group.platform": "Platform",
+    "view.list": "List",
+    "view.board": "Board",
     "workspace.placeholder": "Main workspace (placeholder)",
     collapse: "Collapse sidebar",
     expand: "Expand sidebar",
@@ -733,11 +738,17 @@ function readLocale(): Locale {
   return v === "zh" || v === "en" ? v : "zh";
 }
 
+function readViewMode(): ViewMode {
+  const v = localStorage.getItem("zero-view-mode");
+  return v === "board" ? "board" : "list";
+}
+
 const mql = window.matchMedia("(prefers-color-scheme: dark)");
 
 const state = {
   theme: readTheme(),
   locale: readLocale(),
+  viewMode: readViewMode(),
   systemDark: mql.matches,
 };
 
@@ -787,11 +798,17 @@ export function setLocale(locale: Locale): void {
   emit();
 }
 
+export function setViewMode(mode: ViewMode): void {
+  state.viewMode = mode;
+  localStorage.setItem("zero-view-mode", mode);
+  emit();
+}
+
 export function useUi() {
   // 任一字段变化即触发重渲染；快照用拼接字符串保证引用稳定
   const snapshot = useSyncExternalStore(
     subscribe,
-    () => `${state.theme}|${state.locale}|${state.systemDark}`,
+    () => `${state.theme}|${state.locale}|${state.viewMode}|${state.systemDark}`,
   );
   void snapshot;
 
@@ -800,9 +817,11 @@ export function useUi() {
   return {
     theme: state.theme,
     locale: state.locale,
+    viewMode: state.viewMode,
     isDark: resolvedDark(),
     setTheme,
     setLocale,
+    setViewMode,
     t,
   };
 }

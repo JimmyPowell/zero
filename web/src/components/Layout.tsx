@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard,
-  ClipboardList,
+  CircleUser,
   Server,
   Bot,
   Library,
@@ -35,11 +34,15 @@ interface MenuItem {
   icon: LucideIcon;
 }
 
-const menus: MenuItem[] = [
-  { key: "overview", labelKey: "menu.overview", icon: LayoutDashboard },
-  { key: "requirements", labelKey: "menu.requirements", icon: ClipboardList },
-  { key: "runtime", labelKey: "menu.runtime", icon: Server },
+// 个人区：日常落地页（需求列表 / 看板）
+const personalNav: MenuItem[] = [
+  { key: "requirements", labelKey: "menu.requirements", icon: CircleUser },
+];
+
+// 平台区：智能体 → 运行时 → 技能库（这条执行链是 Zero 的主线）
+const platformNav: MenuItem[] = [
   { key: "agents", labelKey: "menu.agents", icon: Bot },
+  { key: "runtime", labelKey: "menu.runtime", icon: Server },
   { key: "skills", labelKey: "menu.skills", icon: Library },
 ];
 
@@ -77,6 +80,47 @@ function SidebarAction({
         </>
       )}
     </button>
+  );
+}
+
+// 单个导航项：图标 + 文案，激活态高亮；折叠时只剩图标 + tooltip
+function NavLinkItem({
+  to,
+  icon: Icon,
+  label,
+  active,
+  collapsed,
+}: {
+  to: string;
+  icon: LucideIcon;
+  label: string;
+  active: boolean;
+  collapsed: boolean;
+}) {
+  return (
+    <NavLink
+      to={to}
+      title={collapsed ? label : undefined}
+      className={cn(
+        "flex items-center gap-2.5 overflow-hidden rounded-[10px] py-2.5 text-sm whitespace-nowrap transition-colors",
+        collapsed ? "justify-center px-0" : "px-3",
+        active
+          ? "bg-active-bg font-semibold text-active-fg"
+          : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
+      )}
+    >
+      <Icon className="size-[18px] flex-shrink-0" />
+      {!collapsed && <span className="truncate">{label}</span>}
+    </NavLink>
+  );
+}
+
+// 分组小标题：呼应 Multica 的分区，但更轻（折叠态隐藏，仅留间距）
+function NavGroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-3 pt-4 pb-1 text-[11px] font-medium tracking-wider text-muted-foreground/55 select-none">
+      {children}
+    </div>
   );
 }
 
@@ -176,49 +220,49 @@ export function Layout() {
 
         {/* 菜单 */}
         <nav className="flex flex-col gap-0.5">
-          {menus.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.key);
-            return (
-              <NavLink
-                key={item.key}
-                to={"/" + item.key}
-                title={collapsed ? t(item.labelKey) : undefined}
-                className={cn(
-                  "flex items-center gap-2.5 overflow-hidden rounded-[10px] py-2.5 text-sm whitespace-nowrap transition-colors",
-                  collapsed ? "justify-center px-0" : "px-3",
-                  active
-                    ? "bg-active-bg font-semibold text-active-fg"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-                )}
-              >
-                <Icon className="size-[18px] flex-shrink-0" />
-                {!collapsed && (
-                  <span className="truncate">{t(item.labelKey)}</span>
-                )}
-              </NavLink>
-            );
-          })}
+          {/* 个人区：我的需求（落地页，issue 详情页也保持高亮） */}
+          {personalNav.map((item) => (
+            <NavLinkItem
+              key={item.key}
+              to={"/" + item.key}
+              icon={item.icon}
+              label={t(item.labelKey)}
+              active={
+                isActive(item.key) ||
+                (item.key === "requirements" &&
+                  location.pathname.startsWith("/issues"))
+              }
+              collapsed={collapsed}
+            />
+          ))}
+
+          {/* 平台区 */}
+          {collapsed ? (
+            <div className="mx-2 my-1.5 h-px bg-border/60" />
+          ) : (
+            <NavGroupLabel>{t("menu.group.platform")}</NavGroupLabel>
+          )}
+          {platformNav.map((item) => (
+            <NavLinkItem
+              key={item.key}
+              to={"/" + item.key}
+              icon={item.icon}
+              label={t(item.labelKey)}
+              active={isActive(item.key)}
+              collapsed={collapsed}
+            />
+          ))}
         </nav>
 
         {/* 底部：设置 + 折叠收起 */}
         <div className="mt-auto flex flex-col gap-0.5">
-          <NavLink
+          <NavLinkItem
             to="/settings"
-            title={collapsed ? t("menu.settings") : undefined}
-            className={cn(
-              "flex items-center gap-2.5 overflow-hidden rounded-[10px] py-2.5 text-sm whitespace-nowrap transition-colors",
-              collapsed ? "justify-center px-0" : "px-3",
-              isActive("settings")
-                ? "bg-active-bg font-semibold text-active-fg"
-                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-            )}
-          >
-            <Settings className="size-[18px] flex-shrink-0" />
-            {!collapsed && (
-              <span className="truncate">{t("menu.settings")}</span>
-            )}
-          </NavLink>
+            icon={Settings}
+            label={t("menu.settings")}
+            active={isActive("settings")}
+            collapsed={collapsed}
+          />
           <button
             type="button"
             title={collapsed ? t("expand") : t("collapse")}
