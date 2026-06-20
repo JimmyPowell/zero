@@ -2,6 +2,10 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 修复：评论 markdown 链接在 SPA 里顶掉当前页
+
+`Markdown.tsx` 没给 `<a>` 做定制 → 裸 `<a href>` 在单页应用里点击会**导航走当前标签、整个 Zero 被替换**（agent 报告里给 `http://localhost:5180` 一点就丢）。修：`components.a` 统一加 `target="_blank" rel="noopener noreferrer"`，作用在渲染层、与 href 无关，对一切网址（含 gfm 自动识别的裸链接）一致生效。全项目 `<Markdown>` 仅用于时间线评论，一处修全覆盖；RunLogOverlay 是纯文本不受影响。
+
 ## 2026-06-20 · 实现：子代理结构化（B）🎉
 
 执行日志里子代理(sub-agent)步骤分层显示。真机抓 stream-json 确认：子代理启动工具

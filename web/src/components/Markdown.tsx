@@ -23,7 +23,18 @@ export function Markdown({
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          // 所有链接一律新标签打开 + 安全 rel —— 否则在 SPA 里点链接会顶掉当前页面（整个 Zero 应用被导航走）。
+          // 作用在渲染层、与 href 无关，故对一切网址（含 gfm 自动识别的裸链接）一致生效。
+          a({ node: _node, ...props }) {
+            return <a {...props} target="_blank" rel="noopener noreferrer" />;
+          },
+        }}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   );
 }
