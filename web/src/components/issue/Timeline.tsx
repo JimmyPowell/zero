@@ -1,4 +1,4 @@
-import { ChevronRight, Paperclip } from "lucide-react";
+import { ChevronRight, Paperclip, FileDiff } from "lucide-react";
 
 import { ActorAvatar } from "@/components/ActorAvatar";
 import { Markdown } from "@/components/Markdown";
@@ -135,14 +135,74 @@ function RunCard({
   );
 }
 
+// 时间线里的「改动卡片」：改了几个文件 + ±行，点开看 diff
+function DiffCard({
+  actorName,
+  actorAvatar,
+  time,
+  filesChanged,
+  additions,
+  deletions,
+  onOpen,
+}: {
+  actorName: string;
+  actorAvatar?: string | null;
+  time: string;
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  onOpen: () => void;
+}) {
+  const { t } = useUi();
+  return (
+    <li className="flex gap-3 py-2.5">
+      <ActorAvatar
+        type="agent"
+        name={actorName}
+        url={actorAvatar}
+        className="mt-0.5 size-7"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-medium text-foreground">
+            {actorName}
+          </span>
+          <span className="text-xs text-muted-foreground">{time}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="mt-1.5 flex w-full items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-2.5 text-left transition-colors hover:border-active-fg/40 hover:bg-sidebar-accent"
+        >
+          <FileDiff className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+            {t("diff.filesChanged").replace("{n}", String(filesChanged))}
+            {"  "}
+            <span className="text-emerald-600 dark:text-emerald-400">
+              +{additions}
+            </span>{" "}
+            <span className="text-red-600 dark:text-red-400">−{deletions}</span>
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-active-fg">
+            {t("diff.view")}
+            <ChevronRight className="size-3.5" />
+          </span>
+        </button>
+      </div>
+    </li>
+  );
+}
+
 export function Timeline({
   events,
   runs = {},
   onOpenRun,
+  onOpenDiff,
 }: {
   events: IssueEvent[];
   runs?: Record<string, RunSummary>;
   onOpenRun?: (taskId: string) => void;
+  onOpenDiff?: (taskId: string) => void;
 }) {
   const { t, locale } = useUi();
 
@@ -235,6 +295,27 @@ export function Timeline({
           meta?.taskId
         ) {
           return null;
+        }
+
+        // 变更可视化：diff_ready → 改动卡片
+        if (ev.kind === "diff_ready" && meta?.taskId) {
+          const m = ev.meta as {
+            filesChanged?: number;
+            additions?: number;
+            deletions?: number;
+          } | null;
+          return (
+            <DiffCard
+              key={ev.id}
+              actorName={actorName}
+              actorAvatar={ev.actor?.avatarUrl}
+              time={time}
+              filesChanged={m?.filesChanged ?? 0}
+              additions={m?.additions ?? 0}
+              deletions={m?.deletions ?? 0}
+              onOpen={() => onOpenDiff?.(meta.taskId!)}
+            />
+          );
         }
 
         // 变更：活动行

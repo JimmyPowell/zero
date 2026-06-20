@@ -10,6 +10,7 @@ import { AssigneePicker } from "@/components/issue/AssigneePicker";
 import { BindingPicker } from "@/components/issue/BindingPicker";
 import { Timeline } from "@/components/issue/Timeline";
 import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
+import { DiffOverlay } from "@/components/issue/DiffOverlay";
 import { DescriptionField } from "@/components/issue/DescriptionField";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
@@ -69,6 +70,7 @@ export function IssueDetailView() {
   const [events, setEvents] = useState<IssueEvent[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
+  const [openDiffTaskId, setOpenDiffTaskId] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -272,6 +274,7 @@ export function IssueDetailView() {
               events={events}
               runs={runsById}
               onOpenRun={(taskId) => setOpenRunId(taskId)}
+              onOpenDiff={(taskId) => setOpenDiffTaskId(taskId)}
             />
 
             {/* 评论输入 */}
@@ -432,6 +435,14 @@ export function IssueDetailView() {
         run={openRun}
         onClose={() => setOpenRunId(null)}
         onFinished={() => void refresh()}
+      />
+    )}
+    {openDiffTaskId && wsId && (
+      <DiffOverlay
+        workspaceId={wsId}
+        issueId={issue.id}
+        taskId={openDiffTaskId}
+        onClose={() => setOpenDiffTaskId(null)}
       />
     )}
     </>
