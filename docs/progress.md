@@ -2,6 +2,10 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · ⏳待办：容器化部署方案（docker-compose）—— 仅记录，不实现
+
+补进 [deployment.md](./deployment.md)。结论：**compose 只装控制平面三件套（server + DB + 前端），daemon 不进 compose**（它要 CLI/登录态/跑真实仓库，且纯出站主动拉，应是独立原生进程）。两个必须持久卷：MySQL 数据 + 附件目录（`ATTACHMENTS_DIR`）。前端三选一（推荐 Cloudflare Pages）。落地前先核实 Web 实时日志链路是否 SSE（怕 Cloudflare 100s 超时）。本次只写文档，不产出 Dockerfile/compose。
+
 ## 2026-06-20 · 出方案：多用户凭据隔离 + 沙箱化（调查，待办）⏳
 
 部署到共享机的两个隔离问题，纯调查、**不实现**，方案落档：
