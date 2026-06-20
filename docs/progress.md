@@ -2,6 +2,10 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 修复：无头模式禁用 AskUserQuestion（Tier 1）
+
+实测发现:`claude -p` 无头下 `AskUserQuestion` **不会真问人** —— 返回占位串 `Answer questions?` 后模型当场自己选「推荐项」继续(DB 实锤 issue「e-zen项目检查」seq#18 ask→#19 占位→#20 自决),把决策权悄悄从人手里拿走,且 CLI 无头无任何受支持的回答通道(查证官方文档:仅 Agent SDK 的 `canUseTool` 支持)。修:daemon `runClaudeLike` 加 `--disallowedTools AskUserQuestion`(仅 daemon 端一行,server 不动)。禁掉后模型改用大白话提问→落进时间线评论→人回评论走续跑 resume 接着干。**需重启 daemon 才生效,且只影响新 run**。结构化多选交互(`zero_ask_user` MCP + 答题 UI + 复用续跑 resume)留作 Tier 2。
+
 ## 2026-06-20 · 修复：评论 markdown 链接在 SPA 里顶掉当前页
 
 `Markdown.tsx` 没给 `<a>` 做定制 → 裸 `<a href>` 在单页应用里点击会**导航走当前标签、整个 Zero 被替换**（agent 报告里给 `http://localhost:5180` 一点就丢）。修：`components.a` 统一加 `target="_blank" rel="noopener noreferrer"`，作用在渲染层、与 href 无关，对一切网址（含 gfm 自动识别的裸链接）一致生效。全项目 `<Markdown>` 仅用于时间线评论，一处修全覆盖；RunLogOverlay 是纯文本不受影响。

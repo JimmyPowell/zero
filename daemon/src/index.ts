@@ -673,6 +673,11 @@ async function runClaudeLike(
     "stream-json",
     "--verbose", // stream-json 配合 -p 必须带 --verbose
     "--dangerously-skip-permissions",
+    // 无头模式没有交互终端：AskUserQuestion 不会真的问人、只会返回占位串后让模型自己选「推荐项」继续，
+    // 反而把决策权悄悄从人手里拿走。禁掉它 → 需要拍板时模型改用大白话提问（落进时间线评论），
+    // 人回一条评论即走续跑 resume 接着干（Zero 原生的人在环路）。
+    "--disallowedTools",
+    "AskUserQuestion",
   ];
   if (opts.model) cmd.push("--model", opts.model);
   if (opts.sessionId) cmd.push("--resume", opts.sessionId);
