@@ -626,6 +626,35 @@ export const notificationOutbox = mysqlTable(
   ],
 );
 
+// 知识库文档索引：真相是 git 仓库里的 markdown，这里只存索引/元数据，供列表 + 检索(M3 全文/向量)。
+export const kbDoc = mysqlTable(
+  "kb_doc",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // null = 工作空间级；非空 = 项目级（松引用，同 issue.projectId）
+    projectId: char("project_id", { length: 36 }),
+    scope: mysqlEnum("scope", ["workspace", "project"])
+      .notNull()
+      .default("workspace"),
+    // 知识库仓库内相对路径：conventions.md / projects/<slug>/db.md
+    path: varchar("path", { length: 512 }).notNull(),
+    title: varchar("title", { length: 512 }),
+    pinned: boolean("pinned").notNull().default(false), // 常驻注入(Tier-0 → AGENTS.md)
+    contentHash: char("content_hash", { length: 64 }),
+    updatedBy: char("updated_by", { length: 36 }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [
+    unique("uniq_kb_doc_ws_path").on(t.workspaceId, t.path),
+    index("idx_kb_doc_workspace").on(t.workspaceId, t.scope),
+    index("idx_kb_doc_project").on(t.projectId),
+  ],
+);
+
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
@@ -633,6 +662,7 @@ export type Issue = typeof issue.$inferSelect;
 export type Repo = typeof repo.$inferSelect;
 export type Project = typeof project.$inferSelect;
 export type ProjectResource = typeof projectResource.$inferSelect;
+export type KbDoc = typeof kbDoc.$inferSelect;
 export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
 export type Skill = typeof skill.$inferSelect;

@@ -134,6 +134,13 @@
       "when": 1781944007038,
       "tag": "0018_tan_human_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1781951846618,
+      "tag": "0019_lonely_lady_bullseye",
+      "breakpoints": true
     }
   ]
 }

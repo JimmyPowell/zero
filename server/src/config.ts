@@ -7,6 +7,8 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
   // 邮件链接里 issue 的 web 基址
   appUrl: process.env.APP_URL ?? "http://localhost:5173",
+  // 知识库 git 仓库根目录（每工作空间一个子目录）。空 → <server>/data/kb（已 gitignore）。
+  kbDir: process.env.KB_DIR ?? "",
   // 邮件（SMTP）。未配置 SMTP_HOST 时邮件 adapter 进 dev 回退（打印不发信）。
   smtp: {
     host: process.env.SMTP_HOST ?? "",
