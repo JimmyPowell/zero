@@ -178,3 +178,29 @@ export async function listDocs(workspaceId: string, projectId?: string | null) {
       : eq(schema.kbDoc.workspaceId, workspaceId);
   return db.select().from(schema.kbDoc).where(where).orderBy(schema.kbDoc.path);
 }
+
+// Tier-0 注入：取常驻(pinned)文档正文 —— 工作空间级全要 + 给定项目级。
+// 供 assembleContext 拼进 agent 上下文（每次跑任务常驻可见）。
+export async function getPinnedKnowledge(
+  workspaceId: string,
+  projectId?: string | null,
+): Promise<{ path: string; title: string | null; content: string }[]> {
+  const rows = await db
+    .select()
+    .from(schema.kbDoc)
+    .where(
+      and(
+        eq(schema.kbDoc.workspaceId, workspaceId),
+        eq(schema.kbDoc.pinned, true),
+      ),
+    )
+    .orderBy(schema.kbDoc.scope, schema.kbDoc.path);
+  const out: { path: string; title: string | null; content: string }[] = [];
+  for (const r of rows) {
+    // 工作空间级全要；项目级仅当属于当前 issue 的项目
+    if (r.scope === "project" && r.projectId !== (projectId ?? null)) continue;
+    const content = await readDoc(workspaceId, r.path).catch(() => null);
+    if (content != null) out.push({ path: r.path, title: r.title, content });
+  }
+  return out;
+}

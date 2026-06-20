@@ -179,6 +179,8 @@ interface Claim {
     attachments?: AttachmentMeta[];
     // 续接会话时，前 resumeFromIndex 条评论已在上一轮上下文里（增量推送用）
     resumeFromIndex?: number;
+    // Tier-0 常驻知识（pinned KB 文档）；buildPrompt 拼成「Team knowledge」段
+    knowledge?: { path: string; title: string | null; content: string }[];
   };
 }
 
@@ -542,6 +544,14 @@ export function buildPrompt(
   L.push("");
   L.push(`# Issue ZERO-${context?.issue.number}: ${context?.issue.title}`);
   if (context?.issue.description) L.push(context.issue.description);
+  const knowledge = context?.knowledge ?? [];
+  if (knowledge.length) {
+    L.push("\n## Team knowledge (always-on — follow these)");
+    for (const k of knowledge) {
+      L.push(`\n### ${k.title ?? k.path}`);
+      L.push(k.content);
+    }
+  }
   const all = context?.comments ?? [];
   const from = context?.resumeFromIndex ?? 0;
   const delta = !opts.full && from > 0 && from < all.length;

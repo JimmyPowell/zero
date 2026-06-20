@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { signAttachmentPath } from "@/lib/storage";
+import { getPinnedKnowledge } from "@/lib/kb";
 
 // 把一个 issue 派发给它指派的 agent（满足条件则建一条 queued task）
 // 返回新建的 taskId，或 null（不满足/已去重）
@@ -108,6 +109,7 @@ export async function assembleContext(
       repoId: schema.issue.repoId,
       workDir: schema.issue.workDir,
       projectId: schema.issue.projectId,
+      workspaceId: schema.issue.workspaceId,
     })
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
@@ -256,6 +258,8 @@ export async function assembleContext(
     .where(eq(schema.attachment.issueId, issueId))
     .orderBy(asc(schema.attachment.createdAt));
 
+  const knowledge = await getPinnedKnowledge(iss.workspaceId, iss.projectId);
+
   return {
     issue: {
       number: iss.number,
@@ -271,6 +275,7 @@ export async function assembleContext(
     })),
     repo,
     work,
+    knowledge,
     attachments: attachments.map((a) => ({
       id: a.id,
       filename: a.filename,
