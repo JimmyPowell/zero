@@ -3,6 +3,15 @@
 > 2026-06-20 记。解决两个被实测暴露的问题:**(A) 自触发续跑（"回调"）** 与 **(B) 子代理（sub-agent）结构化**。
 > 调查见 [progress.md](./progress.md) 同日条目;数据库实锤:issue「检查系统磁盘占用」5 个 task 共用同一 session、**每一轮都靠人发评论才动**,agent 说"1 分钟后回来报"却从不自己回来。
 
+> **真机 E2E 验证（2026-06-20，ZERO-18）**:真 claude agent 跑通 **A.1 定时唤醒**完整闭环 ——
+> agent 调 `zero_wake_me(35)` → 结束 run → server sweeper 准时点燃 → **同 session 续跑**、
+> agent 带完整记忆被叫回("我带着完整会话记忆在约 35 秒后被重新拉起")。
+> **但暴露一个限制(影响 A.2 进程看护)**:agent 用 `setsid bash -c '...' &` 起的脱离后台进程
+> **没能在 run 结束后存活**(产物文件没写出、pid 已消失),疑似被 Claude Code 的 Bash 工具/进程组
+> 清理一起回收。结论:`zero_watch_pid` 的前提"后台进程跨 run 存活"在当前环境不成立,
+> 需要更稳的启动方式(见 Phase 2:daemon 提供 `zero-bg` 双 fork/nohup 启动器,或排查 Bash 工具收尾)。
+> A.1(定时唤醒)不依赖外部进程存活,完全可用。
+
 ## 背景:为什么会缺
 
 Zero 跑 agent 是 `claude -p` **无头单发**:一个 task = 拉起一次 CLI 进程,agent 的整个 agentic loop(含 `Bash run_in_background` + `BashOutput` 轮询)全在这一个进程生命周期内。CLI 一退出,这次 run 就结束。
@@ -106,4 +115,5 @@ daemon claim → --resume 92504e29 + 增量上下文(那条系统评论) → age
 
 ## Phase 2(暂不做)
 
-进程退出码/日志尾巴回传、轮询式兜底续跑、运行时级 kill-switch/配额、子代理事件的更细粒度回放、非 Claude provider 的续跑工具(codex/opencode 经各自 MCP;kimi 无原生 MCP 需降级)。
+- **后台进程跨 run 存活**(真机 E2E 暴露,A.2 前提):daemon 提供 `zero-bg "<cmd>"` 启动器(双 fork + `nohup` + 重定向,脱离 Claude Bash 工具的进程组),返回稳定 pid 供 `zero_watch_pid`;或排查 run 结束时对子进程组的清理是否误杀 setsid 进程。**A.2 需要这个才真正可用**。
+- 进程退出码/日志尾巴回传、轮询式兜底续跑、运行时级 kill-switch/配额、子代理事件的更细粒度回放、非 Claude provider 的续跑工具(codex/opencode 经各自 MCP;kimi 无原生 MCP 需降级)。
