@@ -92,7 +92,7 @@ function RunCard({
   const pill = RUN_PILL[run.status];
   const dur = runDuration(run);
   return (
-    <li className="flex gap-3 py-2.5">
+    <li data-msg className="flex gap-3 py-2.5">
       <ActorAvatar
         type="agent"
         name={actorName}
@@ -174,7 +174,7 @@ export function Timeline({
         // 评论：卡片
         if (ev.kind === "comment") {
           return (
-            <li key={ev.id} className="flex gap-3 py-2.5">
+            <li key={ev.id} data-msg className="flex gap-3 py-2.5">
               <ActorAvatar
                 type={ev.actor?.type}
                 name={ev.actor?.name}
