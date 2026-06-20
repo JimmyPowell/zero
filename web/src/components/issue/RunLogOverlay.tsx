@@ -373,8 +373,9 @@ export function RunLogOverlay({
 
         {/* 顶部活动条：连续同类合并成按占比分段；hover 看标签、点击跳转并高亮、跑动末段脉冲 */}
         {segments.length > 0 && (
-          <div className="flex h-4 w-full items-stretch gap-px px-5 pt-3">
-            {segments.map((s, i) => {
+          <div className="px-5 pt-3 pb-1">
+            <div className="flex h-4 w-full items-stretch gap-px">
+              {segments.map((s, i) => {
               const isSel = selectedSeq === s.startSeq;
               const label = eventChip({
                 type: s.type,
@@ -403,7 +404,8 @@ export function RunLogOverlay({
                   </span>
                 </button>
               );
-            })}
+              })}
+            </div>
           </div>
         )}
 
