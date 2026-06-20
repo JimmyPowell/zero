@@ -2,6 +2,17 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 实现：变更可视化 P-Diff-1/2（feat/file-diff-view）🎉
+
+「看某次运行 agent 改了哪些文件 + diff」——对标 Multica 最大短板 #1579。独立分支 `feat/file-diff-view`（已 rebase 到含 agent_wakeup/子代理的最新 main `e82aca3`，迁移号 `0020` 不撞）。
+
+- **schema**：`task_change`（摘要）+ `task_file_change`（逐文件 path/status/±行/isBinary/patch），迁移 0020。
+- **daemon 捕获**：run 起拍 **HEAD 基线**，结束 `git add -A -N`（让未跟踪新文件现形）+ `git diff -M <baseline>` 抓改动，完事 `git reset` 清掉。**⚠️ 踩坑修正**：原设计想用 `git stash create -u` 当基线，但它把未跟踪文件塞进 stash 隐藏父提交、不在主树 → 两快照 diff **看不到新文件**（agent 建文件极常见）；改 HEAD + intent-to-add，临时 repo 实测 改/增/删 + 新文件 patch 全对。
+- **server**：`/complete` 落 `task_change`/`task_file_change` + 写预留的 `diff_ready` 事件；`GET runs/:taskId/files` 读接口。
+- **前端**：时间线 `diff_ready` → 「改动卡片」(N 文件 +X −Y) → `DiffOverlay`（逐文件折叠 + **手写彩色 unified diff**，直接吃 git patch，零库 API 风险；`@git-diff-view/react` 装过又移除）。
+- server / daemon / web typecheck + build 全过。**留待真机 e2e**：真实 agent 跑一次看 UI 出 diff（git 捕获机制已单测验证）。
+- **合并待办**：`feat/projects-knowledge` 的 `0018` 与 main `0018_agent_wakeup` 撞号，合并时重排。
+
 ## 2026-06-20 · 实现：子代理结构化（B）🎉
 
 执行日志里子代理(sub-agent)步骤分层显示。真机抓 stream-json 确认：子代理启动工具
