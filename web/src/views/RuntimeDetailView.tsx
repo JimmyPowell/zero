@@ -8,13 +8,13 @@ import {
   Gauge,
   Server,
   Bot,
-  Terminal,
 } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
 import { CreateRuntimeDialog } from "@/components/CreateRuntimeDialog";
 import { providerLabel } from "@/components/CreateAgentDialog";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import { relativeTime } from "@/lib/time";
@@ -221,7 +221,7 @@ export function RuntimeDetailView() {
                   key={k}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-sm text-foreground"
                 >
-                  <Terminal className="size-3.5 text-muted-foreground" />
+                  <ProviderIcon provider={k} />
                   {providerLabel[k as AgentProvider] ?? k}
                 </span>
               ))}
