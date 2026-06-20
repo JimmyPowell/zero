@@ -2,6 +2,15 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 实现：项目层 后端 + 前端（P-Proj-1 ✅ / P-Proj-2 前端 ✅）
+
+`feat/projects-knowledge`，每模块 typecheck / 真库验证 + 提交。
+
+- **P-Proj-1 后端**：schema（`project` + 多态 `project_resource` + `issue.projectId`，迁移 `0018`）+ CRUD 路由（`projects.ts`：项目增删改查 + 资源挂载；slug 自动唯一、lead 校验成员、删项目置空 issue.projectId）。**真库 4/4 验证**（建/读、slug 唯一、多态资源 ref JSON 往返、删项目置空 issue + 资源级联删）。
+- **P-Proj-2 前端**：侧栏导航（FolderKanban）+ `/projects` 列表 + `/projects/:id` 详情（信息 / 资源 / 编辑 / 删除）+ `CreateProjectDialog`；api-client（Project/ProjectResource 类型 + 方法）+ i18n（zh/en）。**web typecheck + build 全过**。
+- **⚠️ 共享 dev 库 `zero` 被另一分支污染**：库里有 `agent_wakeup` 表 + 22 条迁移（另一条在飞分支 agent_wakeup，迁移 0018–0021）。我的 `db:migrate` 在共享库是**空操作**（drizzle 按时间戳跳过我的 0018）→ **未污染共享库**；改用隔离库 `zero_projkb`（root 建 + 授权 zero）做验证。**迁移号 `0018` 与 agent_wakeup 撞号**，合并 main 时需把本分支迁移重排到其后。
+- **待续（P-Proj-2）**：issue↔project 绑定（后端 `issues.ts` 接 projectId + 创建弹窗 / 详情 picker + 需求按项目分组）。→ 然后 P-Proj-3（上下文继承）/ 知识库 M1 / 变更可视化 P-Diff-1。
+
 ## 2026-06-20 · 启动：项目层 + 知识库 + 变更可视化（docs 先行，分两条分支）
 
 调研→多轮确认→docs。基于最新 main（`7b48b79`）拉两条分支，**未动 main**：
