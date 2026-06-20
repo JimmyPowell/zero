@@ -104,6 +104,7 @@ export interface Issue {
   status: IssueStatus;
   priority: IssuePriority;
   assignee: IssueAssignee | null;
+  project: { id: string; title: string | null; slug: string | null } | null;
   createdAt: string;
   // 最新活动时间：任意事件（评论/模型回复/状态变更/执行）的最新时间，无事件回退创建时间
   lastActivityAt: string;
@@ -117,6 +118,7 @@ export interface CreateIssuePayload {
   priority?: IssuePriority;
   assigneeType?: "member" | "agent";
   assigneeId?: string;
+  projectId?: string;
   repoId?: string;
   baseBranch?: string;
   workDir?: string;
@@ -255,6 +257,7 @@ export interface UpdateIssuePayload {
   priority?: IssuePriority;
   assigneeType?: "member" | "agent" | null;
   assigneeId?: string | null;
+  projectId?: string | null;
   repoId?: string | null;
   baseBranch?: string | null;
   workDir?: string | null;

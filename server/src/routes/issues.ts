@@ -35,6 +35,7 @@ const createSchema = z.object({
   priority: priorityEnum.optional(),
   assigneeType: assigneeTypeEnum.optional(),
   assigneeId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
   // 工作区绑定（仓库 与 工作目录 互斥）
   repoId: z.string().uuid().optional(),
   baseBranch: z.string().trim().max(255).optional(),
@@ -49,6 +50,7 @@ const updateSchema = z
     priority: priorityEnum.optional(),
     assigneeType: assigneeTypeEnum.nullable().optional(),
     assigneeId: z.string().uuid().nullable().optional(), // null = 取消指派
+    projectId: z.string().uuid().nullable().optional(), // null = 移出项目
     repoId: z.string().uuid().nullable().optional(), // null = 解绑仓库
     baseBranch: z.string().trim().max(255).nullable().optional(),
     workDir: z.string().trim().max(1000).nullable().optional(), // 绑工作目录
@@ -98,6 +100,9 @@ const issueColumns = {
   lastActivityAt: sql<string>`COALESCE((SELECT MAX(${schema.issueEvent.createdAt}) FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id}), ${schema.issue.createdAt})`,
   baseBranch: schema.issue.baseBranch,
   workDir: schema.issue.workDir,
+  projectId: schema.issue.projectId,
+  projectTitle: schema.project.title,
+  projectSlug: schema.project.slug,
   repoId: schema.issue.repoId,
   repoName: schema.repo.name,
   repoDefaultBranch: schema.repo.defaultBranch,
@@ -128,7 +133,8 @@ function baseIssueQuery() {
         eq(schema.issue.assigneeId, schema.agent.id),
       ),
     )
-    .leftJoin(schema.repo, eq(schema.issue.repoId, schema.repo.id));
+    .leftJoin(schema.repo, eq(schema.issue.repoId, schema.repo.id))
+    .leftJoin(schema.project, eq(schema.issue.projectId, schema.project.id));
 }
 
 type IssueRow = Awaited<ReturnType<typeof baseIssueQuery>>[number];
@@ -162,6 +168,9 @@ function shape(row: IssueRow) {
             avatarUrl: row.assigneeAvatar,
           }
         : null,
+    project: row.projectId
+      ? { id: row.projectId, title: row.projectTitle, slug: row.projectSlug }
+      : null,
     createdAt: isoTime(row.createdAt),
     updatedAt: isoTime(row.updatedAt),
     lastActivityAt: isoTime(row.lastActivityAt),
@@ -226,6 +235,23 @@ async function validateAssignee(
   return rows.length > 0;
 }
 
+async function validateProject(
+  workspaceId: string,
+  projectId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: schema.project.id })
+    .from(schema.project)
+    .where(
+      and(
+        eq(schema.project.id, projectId),
+        eq(schema.project.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 export const issueRoutes = new Hono<WorkspaceEnv>()
   .use(requireAuth)
   .use(requireWorkspaceMember)
@@ -237,15 +263,17 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       z.object({
         status: statusEnum.optional(),
         assignee: z.string().optional(),
+        projectId: z.string().optional(),
       }),
     ),
     async (c) => {
       const workspaceId = c.get("workspaceId");
       const { sub } = c.get("user");
-      const { status, assignee } = c.req.valid("query");
+      const { status, assignee, projectId } = c.req.valid("query");
 
       const filters = [eq(schema.issue.workspaceId, workspaceId)];
       if (status) filters.push(eq(schema.issue.status, status));
+      if (projectId) filters.push(eq(schema.issue.projectId, projectId));
       if (assignee === "me") {
         filters.push(eq(schema.issue.assigneeType, "member"));
         filters.push(eq(schema.issue.assigneeId, sub));
@@ -313,6 +341,13 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       baseBranch = body.baseBranch?.trim() || r.def;
     }
 
+    if (
+      body.projectId &&
+      !(await validateProject(workspaceId, body.projectId))
+    ) {
+      return c.json({ error: "项目不在该工作空间" }, 400);
+    }
+
     const id = crypto.randomUUID();
     const createdEventId = crypto.randomUUID();
     await db.transaction(async (tx) => {
@@ -332,6 +367,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         priority: body.priority ?? "none",
         assigneeType: body.assigneeType ?? null,
         assigneeId: body.assigneeId ?? null,
+        projectId: body.projectId ?? null,
         repoId: body.repoId ?? null,
         baseBranch,
         workDir: body.workDir ?? null,
@@ -423,6 +459,15 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
 
     if (patch.title !== undefined) updates.title = patch.title;
     if (patch.description !== undefined) updates.description = patch.description;
+    if (patch.projectId !== undefined) {
+      if (
+        patch.projectId &&
+        !(await validateProject(workspaceId, patch.projectId))
+      ) {
+        return c.json({ error: "项目不在该工作空间" }, 400);
+      }
+      updates.projectId = patch.projectId;
+    }
 
     // 绑定 repoId / workDir 互斥：设一个清另一个
     if (patch.repoId) {
