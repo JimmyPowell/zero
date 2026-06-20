@@ -25,13 +25,13 @@ const ACTIVE = (s: RunStatus) => s === "queued" || s === "running";
 
 // 进度条分段着色（按事件类型）—— 复刻 Multica 顶部彩色条
 const BAR_COLOR: Record<RunEventType, string> = {
-  assistant_text: "bg-emerald-400",
-  thinking: "bg-teal-300",
-  tool_call: "bg-blue-400",
+  assistant_text: "bg-emerald-500",
+  thinking: "bg-teal-400",
+  tool_call: "bg-blue-500",
   tool_result: "bg-slate-300 dark:bg-slate-600",
-  run_status: "bg-violet-300",
-  usage: "bg-amber-300",
-  error: "bg-red-400",
+  run_status: "bg-violet-400",
+  usage: "bg-amber-400",
+  error: "bg-red-500",
 };
 
 // 选中态：同色深一档（点击某段时该段加深、对应事件行高亮）
@@ -374,7 +374,7 @@ export function RunLogOverlay({
         {/* 顶部活动条：连续同类合并成按占比分段；hover 看标签、点击跳转并高亮、跑动末段脉冲 */}
         {segments.length > 0 && (
           <div className="px-5 pt-3 pb-1">
-            <div className="flex h-4 w-full items-stretch overflow-hidden rounded-full">
+            <div className="flex h-4 w-full items-stretch overflow-hidden rounded-sm">
               {segments.map((s, i) => {
               const isSel = selectedSeq === s.startSeq;
               const label = eventChip({
@@ -392,7 +392,7 @@ export function RunLogOverlay({
                     "group relative h-full min-w-[5px] transition-all",
                     isSel
                       ? BAR_COLOR_ACTIVE[s.type]
-                      : cn(BAR_COLOR[s.type], "opacity-70 hover:opacity-100"),
+                      : cn(BAR_COLOR[s.type], "hover:brightness-110"),
                     ACTIVE(status) &&
                       i === segments.length - 1 &&
                       "animate-pulse",
