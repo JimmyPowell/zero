@@ -493,6 +493,67 @@ export interface UpsertChannelPayload {
   enabled?: boolean;
 }
 
+// ---- 项目（Project）----
+export type ProjectStatus =
+  | "planned"
+  | "in_progress"
+  | "paused"
+  | "completed"
+  | "cancelled";
+
+export interface Project {
+  id: string;
+  workspaceId: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  status: ProjectStatus;
+  leadType: "member" | "agent" | null;
+  leadId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectResource {
+  id: string;
+  projectId: string;
+  kind: string; // repo | knowledge | notion | gdoc | url | file …
+  ref: Record<string, unknown>;
+  label: string | null;
+  position: number;
+  createdAt: string;
+}
+
+export interface ProjectDetailResponse {
+  project: Project;
+  resources: ProjectResource[];
+}
+
+export interface CreateProjectPayload {
+  title: string;
+  slug?: string;
+  description?: string;
+  icon?: string;
+  status?: ProjectStatus;
+  leadId?: string;
+}
+
+export interface UpdateProjectPayload {
+  title?: string;
+  description?: string | null;
+  icon?: string | null;
+  status?: ProjectStatus;
+  leadId?: string | null;
+}
+
+export interface AddProjectResourcePayload {
+  kind: string;
+  ref: Record<string, unknown>;
+  label?: string;
+  position?: number;
+}
+
 interface AuthResponse {
   token: string;
   user: AuthUser;
@@ -758,5 +819,51 @@ export const api = {
     request<{ code: string }>(
       `/workspaces/${workspaceId}/channels/telegram/link-code`,
       { method: "POST", body: {} },
+    ),
+
+  // ---- 项目（Project）----
+  listProjects: (workspaceId: string) =>
+    request<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
+
+  createProject: (workspaceId: string, payload: CreateProjectPayload) =>
+    request<{ project: Project }>(`/workspaces/${workspaceId}/projects`, {
+      method: "POST",
+      body: payload,
+    }),
+
+  getProject: (workspaceId: string, id: string) =>
+    request<ProjectDetailResponse>(
+      `/workspaces/${workspaceId}/projects/${id}`,
+    ),
+
+  updateProject: (
+    workspaceId: string,
+    id: string,
+    patch: UpdateProjectPayload,
+  ) =>
+    request<{ project: Project }>(`/workspaces/${workspaceId}/projects/${id}`, {
+      method: "PATCH",
+      body: patch,
+    }),
+
+  deleteProject: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/projects/${id}`, {
+      method: "DELETE",
+    }),
+
+  addProjectResource: (
+    workspaceId: string,
+    id: string,
+    payload: AddProjectResourcePayload,
+  ) =>
+    request<{ resource: ProjectResource }>(
+      `/workspaces/${workspaceId}/projects/${id}/resources`,
+      { method: "POST", body: payload },
+    ),
+
+  deleteProjectResource: (workspaceId: string, id: string, rid: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/projects/${id}/resources/${rid}`,
+      { method: "DELETE" },
     ),
 };

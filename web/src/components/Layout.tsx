@@ -5,6 +5,7 @@ import {
   Server,
   Bot,
   Library,
+  FolderKanban,
   ChevronLeft,
   Search,
   SquarePen,
@@ -37,6 +38,7 @@ interface MenuItem {
 // 个人区：日常落地页（需求列表 / 看板）
 const personalNav: MenuItem[] = [
   { key: "requirements", labelKey: "menu.requirements", icon: CircleUser },
+  { key: "projects", labelKey: "menu.projects", icon: FolderKanban },
 ];
 
 // 平台区：智能体 → 运行时 → 技能库（这条执行链是 Zero 的主线）

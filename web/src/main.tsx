@@ -11,6 +11,8 @@ import { Layout } from "@/components/Layout";
 import { AuthGate } from "@/components/AuthGate";
 import { RequirementsView } from "@/views/RequirementsView";
 import { IssueDetailView } from "@/views/IssueDetailView";
+import { ProjectsView } from "@/views/ProjectsView";
+import { ProjectDetailView } from "@/views/ProjectDetailView";
 import { AgentsView } from "@/views/AgentsView";
 import { AgentDetailView } from "@/views/AgentDetailView";
 import { SkillsView } from "@/views/SkillsView";
@@ -60,6 +62,8 @@ const router = createBrowserRouter([
       { path: "overview", element: <Navigate to="/requirements" replace /> },
       { path: "requirements", element: <RequirementsView /> },
       { path: "issues/:id", element: <IssueDetailView /> },
+      { path: "projects", element: <ProjectsView /> },
+      { path: "projects/:id", element: <ProjectDetailView /> },
       { path: "runtime", element: <RuntimesView /> },
       { path: "runtime/:id", element: <RuntimeDetailView /> },
       { path: "agents", element: <AgentsView /> },
