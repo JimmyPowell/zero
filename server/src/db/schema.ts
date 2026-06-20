@@ -480,6 +480,53 @@ export const taskUsage = mysqlTable(
   ],
 );
 
+// 一次 task 执行的代码变更摘要（daemon 完成时 git diff：run 起拍快照基线 → 结束 numstat+patch）。
+// 一个 task 一行（仿 task_usage 反范式带 workspaceId/issueId，便于无 join 查询）。
+export const taskChange = mysqlTable(
+  "task_change",
+  {
+    taskId: char("task_id", { length: 36 })
+      .primaryKey()
+      .references(() => task.id, { onDelete: "cascade" }),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    issueId: char("issue_id", { length: 36 }).notNull(),
+    filesChanged: int("files_changed").notNull().default(0),
+    additions: int("additions").notNull().default(0),
+    deletions: int("deletions").notNull().default(0),
+    baselineSha: char("baseline_sha", { length: 40 }), // run 起的快照基线 commit
+    headSha: char("head_sha", { length: 40 }), // run 结束时的 HEAD
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("idx_task_change_issue").on(t.issueId)],
+);
+
+// 单文件变更（隶属 task_change）。patch = 该文件的 unified diff（二进制/超大留空，前端懒取）。
+export const taskFileChange = mysqlTable(
+  "task_file_change",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    taskId: char("task_id", { length: 36 })
+      .notNull()
+      .references(() => task.id, { onDelete: "cascade" }),
+    path: varchar("path", { length: 1024 }).notNull(),
+    oldPath: varchar("old_path", { length: 1024 }), // 改名时的原路径
+    status: mysqlEnum("status", [
+      "added",
+      "modified",
+      "deleted",
+      "renamed",
+    ]).notNull(),
+    additions: int("additions").notNull().default(0),
+    deletions: int("deletions").notNull().default(0),
+    isBinary: boolean("is_binary").notNull().default(false),
+    patch: text("patch"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("idx_task_file_change_task").on(t.taskId)],
+);
+
 // Agent 自触发续跑：agent 经 MCP 登记「过会儿叫我」(timer) / 「这个后台进程跑完叫我」(process)。
 // 点燃时 → 插一条系统评论(why) + enqueueTaskForIssue(复用 session_id resume)。
 // timer 由服务端 sweeper 扫 fire_at 点燃；process 由 daemon 探 pid 存活上报点燃。
@@ -612,5 +659,7 @@ export type RuntimeWorkspace = typeof runtimeWorkspace.$inferSelect;
 export type Task = typeof task.$inferSelect;
 export type RunEvent = typeof runEvent.$inferSelect;
 export type TaskUsage = typeof taskUsage.$inferSelect;
+export type TaskChange = typeof taskChange.$inferSelect;
+export type TaskFileChange = typeof taskFileChange.$inferSelect;
 export type ChannelBinding = typeof channelBinding.$inferSelect;
 export type NotificationOutbox = typeof notificationOutbox.$inferSelect;
