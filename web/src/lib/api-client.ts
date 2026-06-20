@@ -252,6 +252,32 @@ export interface RunEventRow {
   createdAt?: string;
 }
 
+// ---- 变更可视化（某次 run 改了哪些文件）----
+export interface RunFileChange {
+  id: string;
+  path: string;
+  oldPath: string | null;
+  status: "added" | "modified" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+  patch: string | null;
+}
+
+export interface RunChangeSummary {
+  taskId: string;
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  baselineSha: string | null;
+  headSha: string | null;
+}
+
+export interface RunFilesResponse {
+  summary: RunChangeSummary | null;
+  files: RunFileChange[];
+}
+
 export interface UpdateIssuePayload {
   title?: string;
   description?: string | null;
@@ -611,6 +637,12 @@ export const api = {
       `/workspaces/${workspaceId}/issues/${issueId}/runs/${taskId}/events${
         after != null ? `?after=${after}` : ""
       }`,
+    ),
+
+  // 某次 run 的变更文件 + 逐文件 diff（变更可视化）
+  listRunFiles: (workspaceId: string, issueId: string, taskId: string) =>
+    request<RunFilesResponse>(
+      `/workspaces/${workspaceId}/issues/${issueId}/runs/${taskId}/files`,
     ),
 
   // SSE 实时流的完整 URL（EventSource 无法自定义请求头 → token 走查询参数）

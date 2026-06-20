@@ -561,6 +561,27 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         summary: z.string().optional(),
         sessionId: z.string().optional(),
         usage: usageSchema,
+        changes: z
+          .object({
+            files: z.array(
+              z.object({
+                path: z.string(),
+                status: z.enum(["added", "modified", "deleted", "renamed"]),
+                additions: z.number().int(),
+                deletions: z.number().int(),
+                isBinary: z.boolean(),
+                patch: z.string().optional(),
+                oldPath: z.string().optional(),
+              }),
+            ),
+            filesChanged: z.number().int(),
+            additions: z.number().int(),
+            deletions: z.number().int(),
+            baselineSha: z.string().nullable().optional(),
+            headSha: z.string().nullable().optional(),
+          })
+          .nullable()
+          .optional(),
       }),
     ),
     async (c) => {
@@ -572,7 +593,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .where(and(eq(schema.task.id, id), eq(schema.task.runtimeId, rt.id)))
         .limit(1);
       if (!tk) return c.json({ error: "任务不存在" }, 404);
-      const { summary, sessionId, usage } = c.req.valid("json");
+      const { summary, sessionId, usage, changes } = c.req.valid("json");
 
       if (summary && summary.trim()) {
         await db.insert(schema.issueEvent).values({
@@ -603,6 +624,61 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           sessionId: sessionId ?? tk.sessionId,
         })
         .where(eq(schema.task.id, id));
+
+      // 变更可视化：落 task_change + task_file_change，并写 diff_ready 时间线事件
+      if (changes && changes.files.length > 0) {
+        await db
+          .delete(schema.taskFileChange)
+          .where(eq(schema.taskFileChange.taskId, tk.id)); // 重发幂等
+        await db
+          .insert(schema.taskChange)
+          .values({
+            taskId: tk.id,
+            workspaceId: tk.workspaceId,
+            issueId: tk.issueId,
+            filesChanged: changes.filesChanged,
+            additions: changes.additions,
+            deletions: changes.deletions,
+            baselineSha: changes.baselineSha ?? null,
+            headSha: changes.headSha ?? null,
+          })
+          .onDuplicateKeyUpdate({
+            set: {
+              filesChanged: changes.filesChanged,
+              additions: changes.additions,
+              deletions: changes.deletions,
+              baselineSha: changes.baselineSha ?? null,
+              headSha: changes.headSha ?? null,
+            },
+          });
+        await db.insert(schema.taskFileChange).values(
+          changes.files.map((f) => ({
+            id: crypto.randomUUID(),
+            taskId: tk.id,
+            path: f.path,
+            oldPath: f.oldPath ?? null,
+            status: f.status,
+            additions: f.additions,
+            deletions: f.deletions,
+            isBinary: f.isBinary,
+            patch: f.patch ?? null,
+          })),
+        );
+        await db.insert(schema.issueEvent).values({
+          id: crypto.randomUUID(),
+          issueId: tk.issueId,
+          workspaceId: tk.workspaceId,
+          actorType: "agent",
+          actorId: tk.agentId,
+          kind: "diff_ready",
+          meta: {
+            taskId: tk.id,
+            filesChanged: changes.filesChanged,
+            additions: changes.additions,
+            deletions: changes.deletions,
+          },
+        });
+      }
 
       // 用量/成本落库（一个 task 一行；重发幂等更新）
       if (usage) {

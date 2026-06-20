@@ -2,6 +2,16 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 合并：滚动导航 + 变更可视化（feat/scroll-nav、feat/file-diff-view → main）🎉
+
+- **feat/scroll-nav**：纯前端，对话右下角浮动滚动导航（ScrollNav）。零冲突。
+- **feat/file-diff-view**：变更可视化（task_change/task_file_change 表 + DiffOverlay + daemon
+  git diff 捕获）。**迁移碰撞**：分支的 `0020_silky_changeling` 与 main 的 `0020_run_cancelled`
+  撞号 → 弃分支 0020、journal/snapshot 取 main、按合并后 schema 重生成为 **`0021_change_visualization`**
+  (纯新增两表，已应用)。代码冲突仅 progress.md + IssueDetailView 导入行(ScrollNav 与 DiffOverlay
+  并存)，daemon/server 自动合并(取消轮询与变更捕获共存)。三端 typecheck + web build 全过。
+- 已清理已合并的 feat/cancel-task worktree + 分支。
+
 ## 2026-06-20 · 实现：取消（停止）运行中的任务（分支 feat/cancel-task，未合并）🎉
 
 参考 Multica 的停止流（pull 模型一致）做的。在独立 worktree 开发（避免热载干扰在跑任务）。
@@ -27,6 +37,16 @@
 ## 2026-06-20 · 修复：评论 markdown 链接在 SPA 里顶掉当前页
 
 `Markdown.tsx` 没给 `<a>` 做定制 → 裸 `<a href>` 在单页应用里点击会**导航走当前标签、整个 Zero 被替换**（agent 报告里给 `http://localhost:5180` 一点就丢）。修：`components.a` 统一加 `target="_blank" rel="noopener noreferrer"`，作用在渲染层、与 href 无关，对一切网址（含 gfm 自动识别的裸链接）一致生效。全项目 `<Markdown>` 仅用于时间线评论，一处修全覆盖；RunLogOverlay 是纯文本不受影响。
+## 2026-06-20 · 实现：变更可视化 P-Diff-1/2（feat/file-diff-view）🎉
+
+「看某次运行 agent 改了哪些文件 + diff」——对标 Multica 最大短板 #1579。独立分支 `feat/file-diff-view`（已 rebase 到含 agent_wakeup/子代理的最新 main `e82aca3`，迁移号 `0020` 不撞）。
+
+- **schema**：`task_change`（摘要）+ `task_file_change`（逐文件 path/status/±行/isBinary/patch），迁移 0020。
+- **daemon 捕获**：run 起拍 **HEAD 基线**，结束 `git add -A -N`（让未跟踪新文件现形）+ `git diff -M <baseline>` 抓改动，完事 `git reset` 清掉。**⚠️ 踩坑修正**：原设计想用 `git stash create -u` 当基线，但它把未跟踪文件塞进 stash 隐藏父提交、不在主树 → 两快照 diff **看不到新文件**（agent 建文件极常见）；改 HEAD + intent-to-add，临时 repo 实测 改/增/删 + 新文件 patch 全对。
+- **server**：`/complete` 落 `task_change`/`task_file_change` + 写预留的 `diff_ready` 事件；`GET runs/:taskId/files` 读接口。
+- **前端**：时间线 `diff_ready` → 「改动卡片」(N 文件 +X −Y) → `DiffOverlay`（逐文件折叠 + **手写彩色 unified diff**，直接吃 git patch，零库 API 风险；`@git-diff-view/react` 装过又移除）。
+- server / daemon / web typecheck + build 全过。**留待真机 e2e**：真实 agent 跑一次看 UI 出 diff（git 捕获机制已单测验证）。
+- **合并待办**：`feat/projects-knowledge` 的 `0018` 与 main `0018_agent_wakeup` 撞号，合并时重排。
 
 ## 2026-06-20 · 实现：子代理结构化（B）🎉
 
