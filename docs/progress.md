@@ -2,6 +2,10 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · P-Proj-2 完成：issue↔project 绑定 + 创建弹窗项目选择器
+
+`issues.ts` 接 projectId（create / update / list 过滤 / 详情，`validateProject` 校验属本工作空间）+ api-client `Issue.project`；`CreateIssueDialog` 属性行加项目下拉（FolderKanban pill），创建时带 projectId。server + web typecheck / build 全过。**剩（收尾）**：issue 详情改项目 + 需求按项目分组。**下一步**：P-Proj-3（issue 继承项目主仓库 → assembleContext）→ 知识库 M1 → 变更可视化 P-Diff-1。
+
 ## 2026-06-20 · 实现：项目层 后端 + 前端（P-Proj-1 ✅ / P-Proj-2 前端 ✅）
 
 `feat/projects-knowledge`，每模块 typecheck / 真库验证 + 提交。
