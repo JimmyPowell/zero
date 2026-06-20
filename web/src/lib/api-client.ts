@@ -557,6 +557,21 @@ export interface AddProjectResourcePayload {
   position?: number;
 }
 
+// ---- 知识库（团队 markdown 文档）----
+export interface KbDoc {
+  id: string;
+  workspaceId: string;
+  projectId: string | null;
+  scope: "workspace" | "project";
+  path: string;
+  title: string | null;
+  pinned: boolean;
+  contentHash: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AuthResponse {
   token: string;
   user: AuthUser;
@@ -867,6 +882,39 @@ export const api = {
   deleteProjectResource: (workspaceId: string, id: string, rid: string) =>
     request<{ ok: boolean }>(
       `/workspaces/${workspaceId}/projects/${id}/resources/${rid}`,
+      { method: "DELETE" },
+    ),
+
+  // ---- 知识库 ----
+  listKbDocs: (workspaceId: string, projectId?: string) =>
+    request<{ docs: KbDoc[] }>(
+      `/workspaces/${workspaceId}/knowledge${
+        projectId ? `?projectId=${projectId}` : ""
+      }`,
+    ),
+
+  getKbDoc: (workspaceId: string, path: string) =>
+    request<{ path: string; content: string }>(
+      `/workspaces/${workspaceId}/knowledge/doc?path=${encodeURIComponent(path)}`,
+    ),
+
+  putKbDoc: (
+    workspaceId: string,
+    payload: {
+      path: string;
+      content: string;
+      projectId?: string | null;
+      pinned?: boolean;
+    },
+  ) =>
+    request<{ id: string; path: string }>(
+      `/workspaces/${workspaceId}/knowledge/doc`,
+      { method: "PUT", body: payload },
+    ),
+
+  deleteKbDoc: (workspaceId: string, path: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/knowledge/doc?path=${encodeURIComponent(path)}`,
       { method: "DELETE" },
     ),
 };
