@@ -127,6 +127,13 @@
       "when": 1781924843703,
       "tag": "0017_attachment",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1781943602786,
+      "tag": "0018_agent_wakeup",
+      "breakpoints": true
     }
   ]
 }

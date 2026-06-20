@@ -7,6 +7,12 @@ import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { hashToken } from "@/lib/token";
 import { assembleContext } from "@/lib/dispatch";
+import {
+  fireWakeup,
+  MAX_PENDING_WAKEUPS,
+  WAKE_MIN_SEC,
+  WAKE_MAX_SEC,
+} from "@/lib/continuation";
 import { incomingRunEventSchema } from "@/lib/run-events";
 import { publish } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
@@ -93,6 +99,43 @@ async function loadAgentSkills(agentId: string) {
     content: r.content,
     files: byId.get(r.id) ?? [],
   }));
+}
+
+// 自唤醒登记：解析 issue 归属 + 指派的 agent（越权/未指派 agent 则拒）。
+async function resolveIssueAgent(
+  issueId: string,
+  rt: schema.Runtime,
+): Promise<
+  { ok: true; agentId: string } | { ok: false; error: string; code: 403 | 404 }
+> {
+  const [iss] = await db
+    .select({
+      workspaceId: schema.issue.workspaceId,
+      assigneeType: schema.issue.assigneeType,
+      assigneeId: schema.issue.assigneeId,
+    })
+    .from(schema.issue)
+    .where(eq(schema.issue.id, issueId))
+    .limit(1);
+  if (!iss || iss.workspaceId !== rt.workspaceId)
+    return { ok: false, error: "issue 不存在或越权", code: 404 };
+  if (iss.assigneeType !== "agent" || !iss.assigneeId)
+    return { ok: false, error: "该 issue 未指派给 agent", code: 403 };
+  return { ok: true, agentId: iss.assigneeId };
+}
+
+// 单 issue 当前待触发的唤醒数（注册上限校验）。
+async function pendingWakeupCount(issueId: string): Promise<number> {
+  const [r] = await db
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(schema.agentWakeup)
+    .where(
+      and(
+        eq(schema.agentWakeup.issueId, issueId),
+        eq(schema.agentWakeup.status, "pending"),
+      ),
+    );
+  return Number(r?.n ?? 0);
 }
 
 export const daemonRoutes = new Hono<DaemonEnv>()
@@ -314,6 +357,132 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     }));
     return c.json({ runs });
   })
+  // 自触发续跑·登记延时唤醒：agent 经 MCP zero_wake_me 调。到点由 server sweeper 点燃。
+  .post(
+    "/issues/:id/wake",
+    zValidator(
+      "json",
+      z.object({
+        afterSec: z.number(),
+        note: z.string().max(500).optional(),
+        taskId: z.string().uuid().optional(),
+      }),
+    ),
+    async (c) => {
+      const rt = c.get("runtime");
+      const issueId = c.req.param("id");
+      const reg = await resolveIssueAgent(issueId, rt);
+      if (!reg.ok) return c.json({ ok: false, error: reg.error }, reg.code);
+      if ((await pendingWakeupCount(issueId)) >= MAX_PENDING_WAKEUPS)
+        return c.json({
+          ok: false,
+          error: `该 issue 待触发的唤醒已达上限（${MAX_PENDING_WAKEUPS}），等已登记的触发后再试。`,
+        });
+      const { afterSec, note, taskId } = c.req.valid("json");
+      const sec = Math.min(
+        Math.max(Math.round(afterSec), WAKE_MIN_SEC),
+        WAKE_MAX_SEC,
+      );
+      const id = crypto.randomUUID();
+      const fireAt = new Date(Date.now() + sec * 1000);
+      await db.insert(schema.agentWakeup).values({
+        id,
+        workspaceId: rt.workspaceId,
+        issueId,
+        agentId: reg.agentId,
+        runtimeId: rt.id,
+        kind: "timer",
+        fireAt,
+        note: note ?? null,
+        sourceTaskId: taskId ?? null,
+      });
+      return c.json({
+        ok: true,
+        wakeupId: id,
+        fireAt: fireAt.toISOString(),
+        afterSec: sec,
+      });
+    },
+  )
+  // 自触发续跑·登记进程看护：agent 经 MCP zero_watch_pid 调。pid 死亡由 daemon 探到后点燃。
+  .post(
+    "/issues/:id/watch",
+    zValidator(
+      "json",
+      z.object({
+        pid: z.number().int().positive(),
+        note: z.string().max(500).optional(),
+        taskId: z.string().uuid().optional(),
+      }),
+    ),
+    async (c) => {
+      const rt = c.get("runtime");
+      const issueId = c.req.param("id");
+      const reg = await resolveIssueAgent(issueId, rt);
+      if (!reg.ok) return c.json({ ok: false, error: reg.error }, reg.code);
+      if ((await pendingWakeupCount(issueId)) >= MAX_PENDING_WAKEUPS)
+        return c.json({
+          ok: false,
+          error: `该 issue 待触发的唤醒已达上限（${MAX_PENDING_WAKEUPS}），等已登记的触发后再试。`,
+        });
+      const { pid, note, taskId } = c.req.valid("json");
+      const id = crypto.randomUUID();
+      await db.insert(schema.agentWakeup).values({
+        id,
+        workspaceId: rt.workspaceId,
+        issueId,
+        agentId: reg.agentId,
+        runtimeId: rt.id,
+        kind: "process",
+        pid,
+        note: note ?? null,
+        sourceTaskId: taskId ?? null,
+      });
+      return c.json({ ok: true, wakeupId: id, pid });
+    },
+  )
+  // daemon 进程看护同步：上报本轮探到已死的 watchId（点燃它们），回传本 runtime 仍 pending 的看护。
+  .post(
+    "/watches/sync",
+    zValidator(
+      "json",
+      z.object({ dead: z.array(z.string().uuid()).max(100).optional() }),
+    ),
+    async (c) => {
+      const rt = c.get("runtime");
+      const { dead } = c.req.valid("json");
+      if (dead?.length) {
+        const rows = await db
+          .select()
+          .from(schema.agentWakeup)
+          .where(
+            and(
+              inArray(schema.agentWakeup.id, dead),
+              eq(schema.agentWakeup.runtimeId, rt.id),
+              eq(schema.agentWakeup.status, "pending"),
+              eq(schema.agentWakeup.kind, "process"),
+            ),
+          );
+        for (const w of rows) await fireWakeup(w);
+      }
+      const pending = await db
+        .select({
+          id: schema.agentWakeup.id,
+          pid: schema.agentWakeup.pid,
+          note: schema.agentWakeup.note,
+        })
+        .from(schema.agentWakeup)
+        .where(
+          and(
+            eq(schema.agentWakeup.runtimeId, rt.id),
+            eq(schema.agentWakeup.status, "pending"),
+            eq(schema.agentWakeup.kind, "process"),
+          ),
+        )
+        .limit(200);
+      return c.json({ watches: pending });
+    },
+  )
   // 上报执行流：daemon adapter 规范化后的细粒度事件，批量写入 + 实时分发
   .post(
     "/tasks/:id/events",

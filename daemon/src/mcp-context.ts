@@ -6,6 +6,7 @@
 const SERVER = process.env.ZERO_SERVER ?? "";
 const TOKEN = process.env.ZERO_TOKEN ?? "";
 const ISSUE = process.env.ZERO_ISSUE_ID ?? "";
+const TASK = process.env.ZERO_TASK_ID ?? "";
 
 async function api(path: string): Promise<any> {
   const r = await fetch(`${SERVER}${path}`, {
@@ -15,6 +16,17 @@ async function api(path: string): Promise<any> {
   const body = t ? JSON.parse(t) : null;
   if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
   return body;
+}
+
+// POST：不在非 2xx 时抛（让工具读 body.ok/body.error 给 agent 友好提示）
+async function apiPost(path: string, body: unknown): Promise<any> {
+  const r = await fetch(`${SERVER}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+    body: JSON.stringify(body),
+  });
+  const t = await r.text();
+  return t ? JSON.parse(t) : null;
 }
 
 const TOOLS = [
@@ -48,6 +60,46 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "zero_wake_me",
+    description:
+      "Schedule yourself to be re-invoked after a delay to continue THIS issue. This run is NON-INTERACTIVE and single-shot: when you end your turn the run ENDS and you are NOT automatically resumed. If you need to wait for something (a long task, a timer) and then continue or report, call this BEFORE ending — you resume with full session memory. Do NOT sleep or busy-wait. Delay range 5–3600 seconds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        after_sec: {
+          type: "number",
+          description: "Seconds from now to wake you (5–3600).",
+        },
+        note: {
+          type: "string",
+          description:
+            "Short reminder to yourself of why you're waking / what to do on wake.",
+        },
+      },
+      required: ["after_sec"],
+    },
+  },
+  {
+    name: "zero_watch_pid",
+    description:
+      "Register a background process (by PID) to watch; when it exits you'll be re-invoked to continue THIS issue. Use after starting a long job that must OUTLIVE this run — launch it detached (setsid/nohup/disown) and pass its PID. This run is single-shot; without this you will NOT be called back when the job finishes. (Exit code isn't captured — re-check results yourself on wake.)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pid: {
+          type: "number",
+          description: "PID of the detached background process to watch.",
+        },
+        note: {
+          type: "string",
+          description:
+            "Short reminder of what the process does / what to do when it finishes.",
+        },
+      },
+      required: ["pid"],
+    },
+  },
 ];
 
 async function callTool(name: string, args: Record<string, any>): Promise<string> {
@@ -63,6 +115,31 @@ async function callTool(name: string, args: Record<string, any>): Promise<string
     if (args.limit) qs.set("limit", String(args.limit));
     const d = await api(`/daemon/issues/${ISSUE}/runs?${qs}`);
     return JSON.stringify(d.runs ?? [], null, 2);
+  }
+  if (name === "zero_wake_me") {
+    const afterSec = Number(args.after_sec ?? args.afterSec);
+    if (!Number.isFinite(afterSec)) throw new Error("after_sec 必填（秒）");
+    const d = await apiPost(`/daemon/issues/${ISSUE}/wake`, {
+      afterSec,
+      note: args.note,
+      taskId: TASK || undefined,
+    });
+    if (d?.ok)
+      return `已安排：约 ${d.afterSec}s 后自动唤醒你继续本 issue（${d.fireAt}）。现在结束本轮 run 即可——届时你会带着完整会话记忆被重新拉起。`;
+    return `登记失败：${d?.error ?? "未知错误"}`;
+  }
+  if (name === "zero_watch_pid") {
+    const pid = Number(args.pid);
+    if (!Number.isInteger(pid) || pid <= 0)
+      throw new Error("pid 必须是正整数");
+    const d = await apiPost(`/daemon/issues/${ISSUE}/watch`, {
+      pid,
+      note: args.note,
+      taskId: TASK || undefined,
+    });
+    if (d?.ok)
+      return `已登记看护 PID ${pid}：它结束后自动唤醒你继续。注意该进程须脱离本会话（setsid/nohup/disown）才能在本轮 run 结束后存活；现在结束本轮 run 即可。`;
+    return `登记失败：${d?.error ?? "未知错误"}`;
   }
   throw new Error(`unknown tool: ${name}`);
 }

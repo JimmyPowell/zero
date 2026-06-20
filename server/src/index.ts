@@ -17,6 +17,7 @@ import {
   attachmentDownloadRoutes,
 } from "@/routes/attachments";
 import { startOutboxWorker } from "@/lib/outbox";
+import { startWakeupWorker } from "@/lib/continuation";
 import { startWecomBot } from "@/lib/channels/wecom-bot";
 import { startTelegramBot } from "@/lib/channels/telegram-bot";
 
@@ -48,6 +49,8 @@ app.route("/attachments", attachmentDownloadRoutes);
 
 // 通知发件箱后台投递
 startOutboxWorker();
+// Agent 自触发续跑：扫到点的延时唤醒并点燃（process 看护由 daemon 探活上报）
+startWakeupWorker();
 // 企业微信智能机器人长连接（配置了 Bot ID/Secret 才启动）
 startWecomBot();
 // Telegram bot 长轮询（配置了 token 才启动）

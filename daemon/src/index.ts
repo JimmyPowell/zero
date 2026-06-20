@@ -26,6 +26,7 @@ import { makeReporter, type Reporter } from "./reporter";
 
 const HEARTBEAT_MS = 20_000;
 const CLAIM_MS = 5_000;
+const WATCH_MS = 5_000; // 进程看护探活周期（自触发续跑）
 const PICKER_PORT = 8799; // 本地文件夹选择器（仅 127.0.0.1）
 const ZERO_DIR = join(homedir(), ".zero");
 const PID_FILE = join(ZERO_DIR, "daemon.pid");
@@ -333,7 +334,12 @@ function startPicker() {
 // 把服务端装配好的上下文拼成给 agent 的 prompt
 // 写本 issue 的 MCP 配置：注入 Zero 上下文 server，env 带服务端地址 / 运行时令牌 / issueId。
 // 路径按 issue 固定，每跑覆盖；0600 收口（含令牌）。返回配置文件路径供 --mcp-config。
-function writeMcpConfig(server: string, token: string, issueId: string): string {
+function writeMcpConfig(
+  server: string,
+  token: string,
+  issueId: string,
+  taskId: string,
+): string {
   ensureDir(MCP_DIR);
   const mcpServerPath = new URL("./mcp-context.ts", import.meta.url).pathname;
   const cfg = {
@@ -341,7 +347,12 @@ function writeMcpConfig(server: string, token: string, issueId: string): string 
       zero: {
         command: process.execPath, // bun 自身
         args: [mcpServerPath],
-        env: { ZERO_SERVER: server, ZERO_TOKEN: token, ZERO_ISSUE_ID: issueId },
+        env: {
+          ZERO_SERVER: server,
+          ZERO_TOKEN: token,
+          ZERO_ISSUE_ID: issueId,
+          ZERO_TASK_ID: taskId, // 自唤醒登记的 source_task（审计/溯源）
+        },
       },
     },
   };
@@ -559,6 +570,9 @@ export function buildPrompt(
   }
   L.push(
     "\nOn-demand context tools (MCP) if the above is insufficient: `zero_older_comments` (earlier comments beyond those shown) and `zero_prior_runs` (past runs' status/outcome on this issue). Prefer the context already given; call these only when you need more.",
+  );
+  L.push(
+    "\nThis run is NON-INTERACTIVE and single-shot: when you end your turn the run ENDS and you are NOT automatically resumed. Do not promise to \"report back in a minute\" or sleep/busy-wait. If you must wait for something and then continue, schedule a callback BEFORE ending: `zero_wake_me(after_sec, note)` to be re-invoked after a delay, or `zero_watch_pid(pid, note)` to be re-invoked when a detached background process exits (launch it with setsid/nohup so it outlives this run). You resume with full session memory.",
   );
   const work = context?.work;
   if (work?.mode === "repo") {
@@ -1091,7 +1105,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     const model = claim.agent?.model ?? null;
     // MCP 仅 claude（按需回拉更深上下文）；codex/opencode 走 prompt 内推送的上下文
     const mcpConfig = spec.mcp
-      ? writeMcpConfig(server, token, issueId)
+      ? writeMcpConfig(server, token, issueId, taskId)
       : undefined;
     // 物化挂载的技能进 worktree（Claude Code 从 .claude/skills 自动发现）；best-effort，不阻断
     try {
@@ -1213,9 +1227,33 @@ async function worker() {
 
   const claimer = setInterval(() => void pump(server, token), CLAIM_MS);
 
+  // 进程看护（自触发续跑）：探本机被看护 pid 的存活，已死的上报服务端点燃续跑，
+  // 并用服务端回传的 pending 列表刷新本地。看护登记由 agent 经 MCP zero_watch_pid 完成。
+  let watchPids = new Map<string, number>(); // wakeupId -> pid
+  const watcher = setInterval(async () => {
+    try {
+      const dead: string[] = [];
+      for (const [id, pid] of watchPids) if (!pidAlive(pid)) dead.push(id);
+      const res = await post<{ watches: { id: string; pid: number | null }[] }>(
+        server,
+        token,
+        "/daemon/watches/sync",
+        { dead },
+      );
+      watchPids = new Map(
+        res.watches
+          .filter((w) => typeof w.pid === "number")
+          .map((w) => [w.id, w.pid as number]),
+      );
+    } catch {
+      /* 网络抖动忽略，下一轮再来 */
+    }
+  }, WATCH_MS);
+
   const shutdown = () => {
     clearInterval(hb);
     clearInterval(claimer);
+    clearInterval(watcher);
     console.log(`[${new Date().toISOString()}] 已停止。`);
     process.exit(0);
   };

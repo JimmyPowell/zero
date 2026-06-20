@@ -477,6 +477,44 @@ export const taskUsage = mysqlTable(
   ],
 );
 
+// Agent 自触发续跑：agent 经 MCP 登记「过会儿叫我」(timer) / 「这个后台进程跑完叫我」(process)。
+// 点燃时 → 插一条系统评论(why) + enqueueTaskForIssue(复用 session_id resume)。
+// timer 由服务端 sweeper 扫 fire_at 点燃；process 由 daemon 探 pid 存活上报点燃。
+// 护栏见 docs/agent-continuation.md（链深上限 / 注册上限 / 状态闸）。
+export const agentWakeup = mysqlTable(
+  "agent_wakeup",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    issueId: char("issue_id", { length: 36 })
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    agentId: char("agent_id", { length: 36 })
+      .notNull()
+      .references(() => agent.id, { onDelete: "cascade" }),
+    // 点燃后入队走它；不强外键(runtime 可被删，唤醒仍可由 server timer 点燃)
+    runtimeId: char("runtime_id", { length: 36 }),
+    kind: mysqlEnum("kind", ["timer", "process"]).notNull(),
+    fireAt: timestamp("fire_at"), // timer：到点时刻；process：空
+    pid: int("pid"), // process：要看护的进程号
+    note: text("note"), // agent 自述的唤醒原因（带进续跑上下文）
+    status: mysqlEnum("status", ["pending", "fired", "expired", "cancelled"])
+      .notNull()
+      .default("pending"),
+    sourceTaskId: char("source_task_id", { length: 36 }), // 注册它的 task（审计）
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    firedAt: timestamp("fired_at"),
+  },
+  (t) => [
+    index("idx_wakeup_due").on(t.status, t.fireAt), // server timer sweep
+    index("idx_wakeup_runtime").on(t.runtimeId, t.status, t.kind), // daemon 拉看护
+    index("idx_wakeup_issue").on(t.issueId),
+  ],
+);
+export type AgentWakeup = typeof agentWakeup.$inferSelect;
+
 // 渠道绑定：某用户在某工作空间「在哪收通知」。kind 决定渠道，config 存渠道参数。
 // N1 仅启用 email；枚举先铺全，后续渠道免迁移。
 export const channelBinding = mysqlTable(
