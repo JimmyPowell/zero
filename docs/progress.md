@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 出方案：多用户凭据隔离 + 沙箱化（调查，待办）⏳
+
+部署到共享机的两个隔离问题，纯调查、**不实现**，方案落档：
+- **多用户凭据**（[multi-user-credentials.md](./multi-user-credentials.md)）：Multica 用"每人各自机器跑自己 daemon"绕开，无共享机按人隔离；Zero 同样没有，但现有 `runtime.ownerId`+private 已够支撑"每人一个 daemon / 各自 OS 用户"——几乎零代码；"共享 daemon+BYOK"（扩 [agent-credentials](./agent-credentials.md) 加 git SSH + 仓库 ACL）留到 SaaS 化。
+- **沙箱**（[sandboxing.md](./sandboxing.md)）：现目录级隔离挡不住外泄 / fork bomb / 逃逸。80/20 推荐 = `@anthropic-ai/sandbox-runtime`(bubblewrap) + cgroups + scoped secrets + **默认拒绝出网 allowlist**（= Anthropic/OpenAI/GitHub 同款原语，只改 spawn 一行）；NEXT rootless 容器 / Sysbox / gVisor；DEFER microVM。
+- 两者是同一件事两面：不沙箱，per-user 密钥也会被同机读走。
+
 ## 2026-06-20 · 合并评论附件（feat/comment-attachments → main）🎉
 
 - 4 提交干净合并(merge-base e7ad60e)，**仅 `progress.md` 冲突**；迁移 `0017_attachment` 是 main(0016)之上的**纯追加**(无碰撞)；其余文件(daemon/schema/dispatch/issues/Timeline/api-client/ui-store/IssueDetailView)全部 auto-merge。
