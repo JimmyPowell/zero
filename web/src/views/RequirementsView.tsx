@@ -9,7 +9,7 @@ import { useAuth } from "@/lib/auth-store";
 import { useIssues } from "@/lib/issues-store";
 import type { LayoutContext } from "@/components/Layout";
 
-export function OverviewView() {
+export function RequirementsView() {
   const { t } = useUi();
   const navigate = useNavigate();
   const { workspaces, currentWorkspace } = useAuth();

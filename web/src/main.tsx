@@ -9,7 +9,7 @@ import {
 import "@/styles/index.css";
 import { Layout } from "@/components/Layout";
 import { AuthGate } from "@/components/AuthGate";
-import { OverviewView } from "@/views/OverviewView";
+import { RequirementsView } from "@/views/RequirementsView";
 import { IssueDetailView } from "@/views/IssueDetailView";
 import { AgentsView } from "@/views/AgentsView";
 import { AgentDetailView } from "@/views/AgentDetailView";
@@ -17,7 +17,6 @@ import { SkillsView } from "@/views/SkillsView";
 import { RuntimesView } from "@/views/RuntimesView";
 import { RuntimeDetailView } from "@/views/RuntimeDetailView";
 import { SettingsView } from "@/views/SettingsView";
-import { PlaceholderView } from "@/views/PlaceholderView";
 import { AuthView } from "@/views/AuthView";
 import { useAuth, restoreAuth } from "@/lib/auth-store";
 
@@ -57,20 +56,17 @@ const router = createBrowserRouter([
       </AuthGate>
     ),
     children: [
-      { index: true, element: <Navigate to="/overview" replace /> },
-      { path: "overview", element: <OverviewView /> },
+      { index: true, element: <Navigate to="/requirements" replace /> },
+      { path: "overview", element: <Navigate to="/requirements" replace /> },
+      { path: "requirements", element: <RequirementsView /> },
       { path: "issues/:id", element: <IssueDetailView /> },
-      {
-        path: "requirements",
-        element: <PlaceholderView titleKey="menu.requirements" />,
-      },
       { path: "runtime", element: <RuntimesView /> },
       { path: "runtime/:id", element: <RuntimeDetailView /> },
       { path: "agents", element: <AgentsView /> },
       { path: "agents/:id", element: <AgentDetailView /> },
       { path: "skills", element: <SkillsView /> },
       { path: "settings", element: <SettingsView /> },
-      { path: "*", element: <Navigate to="/overview" replace /> },
+      { path: "*", element: <Navigate to="/requirements" replace /> },
     ],
   },
 ]);
