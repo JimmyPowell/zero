@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Paperclip, X } from "lucide-react";
 
@@ -10,6 +10,7 @@ import { AssigneePicker } from "@/components/issue/AssigneePicker";
 import { BindingPicker } from "@/components/issue/BindingPicker";
 import { Timeline } from "@/components/issue/Timeline";
 import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
+import { ScrollNav } from "@/components/issue/ScrollNav";
 import { DescriptionField } from "@/components/issue/DescriptionField";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
@@ -64,6 +65,7 @@ export function IssueDetailView() {
   const navigate = useNavigate();
   const { currentWorkspace } = useAuth();
   const wsId = currentWorkspace?.id ?? null;
+  const mainRef = useRef<HTMLElement>(null);
 
   const [issue, setIssue] = useState<IssueDetail | null>(null);
   const [events, setEvents] = useState<IssueEvent[]>([]);
@@ -223,7 +225,10 @@ export function IssueDetailView() {
     <Panel className="overflow-hidden p-0">
       <div className="flex h-full">
         {/* 主区：标题 / 描述 / 时间线 / 评论 —— 仅此处随内容滚动 */}
-        <main className="flex min-w-0 flex-1 flex-col overflow-y-auto px-8 py-6">
+        <main
+          ref={mainRef}
+          className="flex min-w-0 flex-1 flex-col overflow-y-auto px-8 py-6"
+        >
           <div className="mx-auto w-full max-w-[760px]">
             {/* 顶部：返回 + 编号 */}
             <div className="mb-5 flex items-center gap-2 text-sm text-muted-foreground">
@@ -343,6 +348,7 @@ export function IssueDetailView() {
               </div>
             </div>
           </div>
+          <ScrollNav scrollRef={mainRef} />
         </main>
 
         {/* 右侧属性栏：钉在最右，独立滚动 */}
