@@ -2,6 +2,24 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 实现：知识库 M1–M3 + M5-P1（KB 真可用）🎉
+
+团队 markdown 知识库，挂在项目层上。每阶段 typecheck / 真库验证 + 提交（隔离库 `zero_projkb` + 临时 `KB_DIR`，不碰 main 的 `zero` 库）。
+
+- **M1 存储**（`b7fbe6e`）：**server 自管 per-workspace git 仓库**（server 首次碰 fs/git）—— init / 写+commit / 读 / 删 / 列；路径安全（无穿越 /.git / 仅 .md）；`kb_doc` 索引表（scope ws|project、pinned、contentHash）；`config.kbDir`；迁移 0019。真库 7/7。
+- **M2 前端**（`71e898e`）：导航 + `/knowledge` —— 左列表（团队 / 项目分组）+ 右 markdown 编辑 / 预览 + 常驻勾选 / 保存 / 删除。
+- **M3a Tier-0 注入**（`98e3f4a`）：pinned 文档（ws 级 + issue 所属项目级）→ `assembleContext.knowledge` → daemon `buildPrompt` 渲染「Team knowledge」段，每次跑任务常驻给 agent。真库验证。
+- **M3b memory_search**（`078d905`）：`zero_search_knowledge` MCP 工具 + `/daemon/issues/:id/knowledge` 端点，agent 按需检索。真库验证。
+- **M5-P1 kb_write**（`c12e446`）：`zero_write_knowledge` MCP 工具 + 写端点，agent「帮我沉淀」即写库（默认归 issue 的项目）。
+- **闭环**：人写 / 编辑(M2) → git 落库(M1) → 常驻自动注入(M3a) → agent 搜(M3b) + 写(M5-P1)。
+
+**v1 取舍**：编辑器用 textarea + Markdown 预览（非 Milkdown WYSIWYG，留后续）；检索用 LIKE 式（非 FULLTEXT / 向量，语料大了再上）。
+
+**未做（更大块，待续）**：**M4** 外部 KB 接入（MCP host 消费 Notion/Obsidian + 把 Zero 记忆暴露成 MCP server）；**M5-P2** 自动蒸馏（定时后台从对话 / 运行提炼 → 审核队列）。
+
+**留待真机 e2e**：真实 agent 跑一次确认 prompt 带「Team knowledge」+ 三个 MCP 工具可调（机制已单测）。
+**合并待办**：本分支迁移 0018(project)/0019(kb_doc) 与 main 的 0018_agent_wakeup/0019_run_event_subagent 撞号，合并时重排。
+
 ## 2026-06-20 · P-Proj-3 完成：issue 继承项目主仓库（项目层全部闭环 ✅）
 
 `dispatch.ts`：issue 无显式 repo/workDir 但归属项目时，继承 `project_resource(kind=repo,primary)` 当 work 来源；优先级 **issue 显式覆盖 > 项目主仓库 > 空**。真库 3/3 验证（继承 / 覆盖 / empty）。`ProjectDetailView` 资源区加「挂仓库」下拉（挂注册仓库为 primary）+ 主仓库徽标 + 移除。server + web typecheck/build 过。
