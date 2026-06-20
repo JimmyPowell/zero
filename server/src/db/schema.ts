@@ -90,6 +90,9 @@ export const issue = mysqlTable(
       .references(() => user.id),
     // 父需求（子任务层级，弹窗暂不暴露，预留扩展位）
     parentIssueId: char("parent_issue_id", { length: 36 }),
+    // 所属项目（Workspace→Project→Issue）。可空 = 未归类（前端归入虚拟 Inbox）。
+    // 松引用（同 repoId，不设 FK）；删项目时由应用层把相关 issue 的 projectId 置空。
+    projectId: char("project_id", { length: 36 }),
     // 工作区绑定（三选一）：
     //  - repoId(+baseBranch)：绑仓库 → 隔离 worktree（分支 zero/ZERO-N）
     //  - workDir：绑本地工作目录 → 就地执行（不隔离）
@@ -106,6 +109,7 @@ export const issue = mysqlTable(
     index("idx_issue_workspace").on(t.workspaceId),
     index("idx_issue_status").on(t.workspaceId, t.status),
     index("idx_issue_assignee").on(t.assigneeType, t.assigneeId),
+    index("idx_issue_project").on(t.projectId),
   ],
 );
 
@@ -125,6 +129,72 @@ export const repo = mysqlTable(
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [index("idx_repo_workspace").on(t.workspaceId)],
+);
+
+// 项目：Workspace → Project → Issue 的中间分组。绑工作空间、有负责人、有状态生命周期，
+// 挂着若干资源（代码仓库 / 知识库 / 外部文档，见 project_resource）。对标 Multica 但收敛。
+export const project = mysqlTable(
+  "project",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 512 }).notNull(),
+    // 工作空间内唯一的 kebab 标识，= 知识库仓库里 projects/<slug>/ 的目录名
+    slug: varchar("slug", { length: 128 }).notNull(),
+    description: text("description"),
+    icon: varchar("icon", { length: 64 }), // emoji / 图标名
+    status: mysqlEnum("status", [
+      "planned",
+      "in_progress",
+      "paused",
+      "completed",
+      "cancelled",
+    ])
+      .notNull()
+      .default("planned"),
+    // 负责人：先只支持 member；leadType 预留 agent（Multica 允许 agent 当 lead）
+    leadType: mysqlEnum("lead_type", ["member", "agent"]),
+    leadId: char("lead_id", { length: 36 }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [
+    unique("uniq_project_workspace_slug").on(t.workspaceId, t.slug),
+    index("idx_project_workspace").on(t.workspaceId),
+  ],
+);
+
+// 项目资源：多态指针，一表三用 —— 代码仓库(repo) / 原生知识库目录(knowledge) /
+// 外部 KB 指针(notion/gdoc/url/file…)。kind 自由扩展、ref 是 JSON，加类型零迁移。
+// 仿 Multica project_resource；去重在应用层（MySQL 对 JSON 列做唯一约束不便）。
+export const projectResource = mysqlTable(
+  "project_resource",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    projectId: char("project_id", { length: 36 })
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // repo | knowledge | notion | gdoc | confluence | url | file …（自由扩展，加类型零迁移）
+    kind: varchar("kind", { length: 32 }).notNull(),
+    // 按 kind 解释：repo→{repoId|url,baseBranch,primary?} / knowledge→{path} /
+    // notion→{pageId,tokenRef} / url→{href} …
+    ref: json("ref").notNull(),
+    label: varchar("label", { length: 255 }),
+    position: int("position").notNull().default(0),
+    createdBy: char("created_by", { length: 36 }).references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_project_resource_project").on(t.projectId, t.position),
+    index("idx_project_resource_workspace").on(t.workspaceId),
+  ],
 );
 
 // issue 事件：统一时间线（评论 + 状态/指派/优先级变更 + 后续 agent 执行事件）
@@ -561,6 +631,8 @@ export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
 export type Issue = typeof issue.$inferSelect;
 export type Repo = typeof repo.$inferSelect;
+export type Project = typeof project.$inferSelect;
+export type ProjectResource = typeof projectResource.$inferSelect;
 export type IssueEvent = typeof issueEvent.$inferSelect;
 export type Agent = typeof agent.$inferSelect;
 export type Skill = typeof skill.$inferSelect;
