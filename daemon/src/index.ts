@@ -568,7 +568,7 @@ export function buildPrompt(
     for (const cm of shown) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
   }
   L.push(
-    "\nOn-demand context tools (MCP) if the above is insufficient: `zero_older_comments` (earlier comments beyond those shown) and `zero_prior_runs` (past runs' status/outcome on this issue). Prefer the context already given; call these only when you need more.",
+    "\nOn-demand context tools (MCP) if the above is insufficient: `zero_older_comments` (earlier comments), `zero_prior_runs` (past runs on this issue), and `zero_search_knowledge` (search the team knowledge base for conventions/decisions/gotchas). Prefer the context already given; call these only when you need more.",
   );
   const work = context?.work;
   if (work?.mode === "repo") {

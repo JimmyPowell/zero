@@ -48,6 +48,18 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "zero_search_knowledge",
+    description:
+      "Search the TEAM KNOWLEDGE BASE (conventions, decisions, gotchas, runbooks) for this workspace. Use when you need team-specific rules/context not already in your prompt. Returns matching docs with snippets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to search for (keywords)." },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 async function callTool(name: string, args: Record<string, any>): Promise<string> {
@@ -63,6 +75,12 @@ async function callTool(name: string, args: Record<string, any>): Promise<string
     if (args.limit) qs.set("limit", String(args.limit));
     const d = await api(`/daemon/issues/${ISSUE}/runs?${qs}`);
     return JSON.stringify(d.runs ?? [], null, 2);
+  }
+  if (name === "zero_search_knowledge") {
+    const qs = new URLSearchParams();
+    qs.set("q", String(args.query ?? ""));
+    const d = await api(`/daemon/issues/${ISSUE}/knowledge?${qs}`);
+    return JSON.stringify(d.hits ?? [], null, 2);
   }
   throw new Error(`unknown tool: ${name}`);
 }

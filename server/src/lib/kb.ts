@@ -204,3 +204,31 @@ export async function getPinnedKnowledge(
   }
   return out;
 }
+
+// Tier-1 按需检索：在工作空间所有文档里搜 query（标题 / 正文包含，大小写不敏感）。
+// 返回匹配文档 + 命中片段。小语料够用；语料大了再上 FULLTEXT / 向量。
+export async function searchKnowledge(
+  workspaceId: string,
+  query: string,
+  limit = 8,
+): Promise<{ path: string; title: string | null; snippet: string }[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const rows = await db
+    .select()
+    .from(schema.kbDoc)
+    .where(eq(schema.kbDoc.workspaceId, workspaceId));
+  const hits: { path: string; title: string | null; snippet: string }[] = [];
+  for (const r of rows) {
+    const content = (await readDoc(workspaceId, r.path).catch(() => null)) ?? "";
+    const at = content.toLowerCase().indexOf(q);
+    if (at < 0 && !(r.title ?? "").toLowerCase().includes(q)) continue;
+    const snippet =
+      at >= 0
+        ? content.slice(Math.max(0, at - 120), at + q.length + 120).trim()
+        : content.slice(0, 240).trim();
+    hits.push({ path: r.path, title: r.title, snippet });
+    if (hits.length >= limit) break;
+  }
+  return hits;
+}
