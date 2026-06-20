@@ -750,6 +750,35 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       .orderBy(asc(schema.runEvent.seq));
     return c.json({ events });
   })
+  // 某次 run 的变更文件 + 逐文件 diff（变更可视化）
+  .get("/:id/runs/:taskId/files", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const id = c.req.param("id");
+    const taskId = c.req.param("taskId");
+    const [tk] = await db
+      .select({ id: schema.task.id })
+      .from(schema.task)
+      .where(
+        and(
+          eq(schema.task.id, taskId),
+          eq(schema.task.issueId, id),
+          eq(schema.task.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    if (!tk) return c.json({ error: "运行不存在" }, 404);
+    const [summary] = await db
+      .select()
+      .from(schema.taskChange)
+      .where(eq(schema.taskChange.taskId, taskId))
+      .limit(1);
+    const files = await db
+      .select()
+      .from(schema.taskFileChange)
+      .where(eq(schema.taskFileChange.taskId, taskId))
+      .orderBy(asc(schema.taskFileChange.path));
+    return c.json({ summary: summary ?? null, files });
+  })
   // 实时执行流（SSE）：先按 after / Last-Event-ID 从 DB 补齐，再订阅实时；
   // 心跳保活，task 结束发 end 事件收尾。DB 是真相，断线按 seq 续传不漏不重。
   .get("/:id/runs/:taskId/stream", async (c) => {
