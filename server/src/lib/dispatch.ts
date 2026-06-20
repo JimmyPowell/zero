@@ -107,6 +107,7 @@ export async function assembleContext(
       baseBranch: schema.issue.baseBranch,
       repoId: schema.issue.repoId,
       workDir: schema.issue.workDir,
+      projectId: schema.issue.projectId,
     })
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
@@ -163,6 +164,39 @@ export async function assembleContext(
         defaultBranch: r.defaultBranch,
         baseBranch: iss.baseBranch ?? r.defaultBranch,
       };
+    }
+  } else if (!iss.workDir && iss.projectId) {
+    // 继承项目主仓库：issue 未显式绑仓库/工作目录，但归属某项目时，
+    // 取该项目的 project_resource(kind=repo)——primary 优先，否则按 position 最前。
+    const repoResources = await db
+      .select()
+      .from(schema.projectResource)
+      .where(
+        and(
+          eq(schema.projectResource.projectId, iss.projectId),
+          eq(schema.projectResource.kind, "repo"),
+        ),
+      )
+      .orderBy(asc(schema.projectResource.position));
+    const chosen =
+      repoResources.find(
+        (rr) => (rr.ref as { primary?: boolean })?.primary === true,
+      ) ?? repoResources[0];
+    const ref = (chosen?.ref ?? {}) as { repoId?: string; baseBranch?: string };
+    if (ref.repoId) {
+      const [r] = await db
+        .select()
+        .from(schema.repo)
+        .where(eq(schema.repo.id, ref.repoId))
+        .limit(1);
+      if (r) {
+        repo = {
+          name: r.name,
+          url: r.url,
+          defaultBranch: r.defaultBranch,
+          baseBranch: ref.baseBranch || r.defaultBranch,
+        };
+      }
     }
   }
 

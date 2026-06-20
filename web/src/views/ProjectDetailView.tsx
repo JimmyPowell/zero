@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, Pencil, Trash2, Link2 } from "lucide-react";
+import { ChevronLeft, Pencil, Trash2, Link2, Plus } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import {
@@ -12,6 +18,7 @@ import {
   type Project,
   type ProjectResource,
   type Member,
+  type Repo,
 } from "@/lib/api-client";
 
 function Field({ label, value }: { label: string; value: string }) {
@@ -35,6 +42,7 @@ export function ProjectDetailView() {
   const [project, setProject] = useState<Project | null>(null);
   const [resources, setResources] = useState<ProjectResource[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [repos, setRepos] = useState<Repo[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -47,12 +55,14 @@ export function ProjectDetailView() {
     Promise.all([
       api.getProject(wsId, id),
       api.listMembers(wsId).catch(() => ({ members: [] as Member[] })),
+      api.listRepos(wsId).catch(() => ({ repos: [] as Repo[] })),
     ])
-      .then(([p, m]) => {
+      .then(([p, m, r]) => {
         if (!alive) return;
         setProject(p.project);
         setResources(p.resources);
         setMembers(m.members);
+        setRepos(r.repos);
         setStatus("ready");
       })
       .catch(() => alive && setStatus("error"));
@@ -66,6 +76,22 @@ export function ProjectDetailView() {
     if (!window.confirm(t("projects.deleteConfirm"))) return;
     await api.deleteProject(wsId, project.id);
     navigate("/projects");
+  }
+
+  async function attachRepo(repoId: string) {
+    if (!wsId || !project) return;
+    // 第一个挂上的仓库标 primary（派发时按 primary 继承）
+    const isFirst = !resources.some((r) => r.kind === "repo");
+    const { resource } = await api.addProjectResource(wsId, project.id, {
+      kind: "repo",
+      ref: { repoId, primary: isFirst },
+    });
+    setResources((prev) => [...prev, resource]);
+  }
+  async function removeResource(rid: string) {
+    if (!wsId || !project) return;
+    await api.deleteProjectResource(wsId, project.id, rid);
+    setResources((prev) => prev.filter((r) => r.id !== rid));
   }
 
   if (status === "loading") {
@@ -99,6 +125,14 @@ export function ProjectDetailView() {
   const lead = project.leadId
     ? members.find((m) => m.id === project.leadId)
     : null;
+
+  const attachedRepoIds = new Set(
+    resources
+      .filter((r) => r.kind === "repo")
+      .map((r) => (r.ref as { repoId?: string })?.repoId)
+      .filter(Boolean),
+  );
+  const availableRepos = repos.filter((r) => !attachedRepoIds.has(r.id));
 
   return (
     <Panel className="flex flex-col">
@@ -159,9 +193,29 @@ export function ProjectDetailView() {
         )}
 
         <div className="mt-6">
-          <h2 className="text-sm font-semibold text-foreground">
-            {t("project.secResources")}
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground">
+              {t("project.secResources")}
+            </h2>
+            {availableRepos.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground">
+                  <Plus className="size-3.5" />
+                  {t("project.attachRepo")}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[180px]">
+                  {availableRepos.map((r) => (
+                    <DropdownMenuItem
+                      key={r.id}
+                      onSelect={() => void attachRepo(r.id)}
+                    >
+                      <span className="flex-1 truncate">{r.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t("project.resourcesHint")}
           </p>
@@ -171,20 +225,43 @@ export function ProjectDetailView() {
             </div>
           ) : (
             <div className="mt-3 flex flex-col gap-2">
-              {resources.map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-4 py-2.5"
-                >
-                  <Link2 className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                    {r.kind}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                    {r.label || JSON.stringify(r.ref)}
-                  </span>
-                </div>
-              ))}
+              {resources.map((r) => {
+                const isPrimary =
+                  (r.ref as { primary?: boolean })?.primary === true;
+                const repoName =
+                  r.kind === "repo"
+                    ? (repos.find(
+                        (x) => x.id === (r.ref as { repoId?: string })?.repoId,
+                      )?.name ?? (r.ref as { repoId?: string })?.repoId)
+                    : null;
+                return (
+                  <div
+                    key={r.id}
+                    className="group flex items-center gap-2.5 rounded-xl border border-border bg-card px-4 py-2.5"
+                  >
+                    <Link2 className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {r.kind}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                      {repoName || r.label || JSON.stringify(r.ref)}
+                    </span>
+                    {isPrimary && (
+                      <span className="shrink-0 rounded-md bg-[#2563eb]/10 px-1.5 py-0.5 text-xs text-[#2563eb]">
+                        {t("project.primary")}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      title={t("projects.delete")}
+                      onClick={() => void removeResource(r.id)}
+                      className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
