@@ -2,6 +2,11 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · P-Proj-3 完成：issue 继承项目主仓库（项目层全部闭环 ✅）
+
+`dispatch.ts`：issue 无显式 repo/workDir 但归属项目时，继承 `project_resource(kind=repo,primary)` 当 work 来源；优先级 **issue 显式覆盖 > 项目主仓库 > 空**。真库 3/3 验证（继承 / 覆盖 / empty）。`ProjectDetailView` 资源区加「挂仓库」下拉（挂注册仓库为 primary）+ 主仓库徽标 + 移除。server + web typecheck/build 过。
+**至此项目层 P-Proj-1/2/3 端到端完成。** 下一大块 = **知识库 M1**（server 自管 git 仓库 —— server 首次碰 fs/git，架构新增点）。轻量收尾仍挂着：issue 详情改项目 + 需求按项目分组。
+
 ## 2026-06-20 · P-Proj-2 完成：issue↔project 绑定 + 创建弹窗项目选择器
 
 `issues.ts` 接 projectId（create / update / list 过滤 / 详情，`validateProject` 校验属本工作空间）+ api-client `Issue.project`；`CreateIssueDialog` 属性行加项目下拉（FolderKanban pill），创建时带 projectId。server + web typecheck / build 全过。**剩（收尾）**：issue 详情改项目 + 需求按项目分组。**下一步**：P-Proj-3（issue 继承项目主仓库 → assembleContext）→ 知识库 M1 → 变更可视化 P-Diff-1。
