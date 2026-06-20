@@ -154,6 +154,8 @@ export const issueEvent = mysqlTable(
       "run_failed",
       "diff_ready",
       "pr_opened",
+      // 末尾追加（取消任务）—— 放最后让 MySQL 走 INSTANT、不锁表重建
+      "run_cancelled",
     ]).notNull(),
     body: text("body"), // 评论正文（markdown）
     meta: json("meta"), // 结构化负载，如 {from,to}

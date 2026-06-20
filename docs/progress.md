@@ -2,6 +2,24 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 实现：取消（停止）运行中的任务（分支 feat/cancel-task，未合并）🎉
+
+参考 Multica 的停止流（pull 模型一致）做的。在独立 worktree 开发（避免热载干扰在跑任务）。
+- **决策**：轮询 3s · 取消后 issue 状态不变 · 硬杀(SIGKILL) · 连带取消该 issue 待触发的自唤醒。
+- **Server**：`POST /workspaces/:ws/issues/:id/runs/:taskId/cancel`(成员)→ 仅 queued/running 时置
+  task=cancelled、写 `run_cancelled` 时间线、取消 pending wakeup、`publish(__end)` 让 SSE 收尾；
+  `GET /daemon/tasks/:id/status`(运行时)给 daemon 轮询。迁移 0020 给 `issue_event.kind` **末尾追加**
+  `run_cancelled`(走 MySQL INSTANT、不锁表)。
+- **Daemon**：每个任务一个 `AbortController` + 每 3s 轮询 status，cancelled 即 `ac.abort()` →
+  `Bun.spawn({signal})` 硬杀 agent 子进程；中止后跳过 complete/fail 回报(不覆盖 cancelled)，
+  会话失效不重跑。finally 清轮询。
+- **Web**：RunLogOverlay 活动中 run 加「停止」按钮(红、Square)；Timeline 把 run_cancelled 并入
+  运行卡片(显示「已取消」，RUN_PILL/i18n 已有)；api `cancelRun` + IssueEventKind/i18n。
+- **测试**：server 半端到端 **12/12**(cancel 端点鉴权+副作用、status 端点、run_cancelled、连带取消
+  wakeup、issue 状态不变、幂等、404)。三端 typecheck + web build 全过。daemon 杀进程那半靠 typecheck +
+  逻辑，**真机杀进程留待合并并重启 daemon 后验**。
+- **未合并**：合并需重启 daemon 才生效；迁移 0020 已应用到 dev DB(INSTANT，不影响在跑任务)。
+
 ## 2026-06-20 · 修复：无头模式禁用 AskUserQuestion（Tier 1）
 
 实测发现:`claude -p` 无头下 `AskUserQuestion` **不会真问人** —— 返回占位串 `Answer questions?` 后模型当场自己选「推荐项」继续(DB 实锤 issue「e-zen项目检查」seq#18 ask→#19 占位→#20 自决),把决策权悄悄从人手里拿走,且 CLI 无头无任何受支持的回答通道(查证官方文档:仅 Agent SDK 的 `canUseTool` 支持)。修:daemon `runClaudeLike` 加 `--disallowedTools AskUserQuestion`(仅 daemon 端一行,server 不动)。禁掉后模型改用大白话提问→落进时间线评论→人回评论走续跑 resume 接着干。**需重启 daemon 才生效,且只影响新 run**。结构化多选交互(`zero_ask_user` MCP + 答题 UI + 复用续跑 resume)留作 Tier 2。

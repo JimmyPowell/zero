@@ -483,6 +483,18 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       return c.json({ watches: pending });
     },
   )
+  // 取消轮询：daemon 跑任务期间每 3s 查本任务状态，看到 cancelled 即杀 agent 子进程。
+  .get("/tasks/:id/status", async (c) => {
+    const rt = c.get("runtime");
+    const id = c.req.param("id");
+    const [tk] = await db
+      .select({ status: schema.task.status })
+      .from(schema.task)
+      .where(and(eq(schema.task.id, id), eq(schema.task.runtimeId, rt.id)))
+      .limit(1);
+    if (!tk) return c.json({ error: "任务不存在" }, 404);
+    return c.json({ status: tk.status });
+  })
   // 上报执行流：daemon adapter 规范化后的细粒度事件，批量写入 + 实时分发
   .post(
     "/tasks/:id/events",

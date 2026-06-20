@@ -231,7 +231,8 @@ export function Timeline({
           ((ev.kind === "run_started" &&
             queuedTaskIds.has(meta?.taskId ?? "")) ||
             ev.kind === "run_finished" ||
-            ev.kind === "run_failed") &&
+            ev.kind === "run_failed" ||
+            ev.kind === "run_cancelled") &&
           meta?.taskId
         ) {
           return null;

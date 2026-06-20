@@ -154,6 +154,7 @@ export type IssueEventKind =
   | "run_progress"
   | "run_finished"
   | "run_failed"
+  | "run_cancelled"
   | "diff_ready"
   | "pr_opened";
 
@@ -625,6 +626,13 @@ export const api = {
     if (after != null) qs.set("after", String(after));
     return `${API_BASE}/workspaces/${workspaceId}/issues/${issueId}/runs/${taskId}/stream?${qs.toString()}`;
   },
+
+  // 取消（停止）一次 run
+  cancelRun: (workspaceId: string, issueId: string, taskId: string) =>
+    request<{ ok: boolean; status?: string; alreadyTerminal?: boolean }>(
+      `/workspaces/${workspaceId}/issues/${issueId}/runs/${taskId}/cancel`,
+      { method: "POST" },
+    ),
 
   // ---- 仓库 ----
   listRepos: (workspaceId: string) =>
