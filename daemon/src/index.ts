@@ -262,6 +262,77 @@ function sanitize(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
 }
 
+// 变更可视化：拍一个快照引用（含未提交/未跟踪，不改工作树）。
+// stash create 有改动时返回快照 commit；干净时退回 HEAD；非 git 仓库返回 null。
+async function snapshotRef(cwd: string): Promise<string | null> {
+  const head = await git(["rev-parse", "HEAD"], cwd);
+  if (!head.ok) return null;
+  const stash = await git(["stash", "create", "-u"], cwd);
+  return (stash.ok && stash.out) || head.out || null;
+}
+
+type FileChange = {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+  patch?: string;
+};
+
+// 算 baseline → 当前 的改动（每文件 ±行/状态 + 逐文件 unified patch）。best-effort，失败返回 null。
+async function captureChanges(cwd: string, baseline: string) {
+  const end = (await snapshotRef(cwd)) ?? "HEAD";
+  const Q = ["-c", "core.quotePath=false"];
+  const ns = await git([...Q, "diff", "--numstat", baseline, end], cwd);
+  if (!ns.ok) return null;
+  const st = await git([...Q, "diff", "--name-status", baseline, end], cwd);
+  const statusMap = new Map<string, FileChange["status"]>();
+  for (const line of st.out.split("\n")) {
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const code = line.slice(0, tab).trim();
+    const p = line.slice(tab + 1);
+    statusMap.set(
+      p,
+      code.startsWith("A")
+        ? "added"
+        : code.startsWith("D")
+          ? "deleted"
+          : "modified",
+    );
+  }
+  const files: FileChange[] = [];
+  for (const line of ns.out.split("\n")) {
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    const isBinary = parts[0] === "-" || parts[1] === "-";
+    const path = parts.slice(2).join("\t");
+    files.push({
+      path,
+      status: statusMap.get(path) ?? "modified",
+      additions: isBinary ? 0 : parseInt(parts[0], 10) || 0,
+      deletions: isBinary ? 0 : parseInt(parts[1], 10) || 0,
+      isBinary,
+    });
+  }
+  // 逐文件取 patch（二进制跳过；单文件超 200KB 留空，前端可后续懒取）
+  for (const f of files) {
+    if (f.isBinary) continue;
+    const p = await git([...Q, "diff", baseline, end, "--", f.path], cwd);
+    if (p.ok && p.out.length <= 200_000) f.patch = p.out;
+  }
+  const head = await git(["rev-parse", "HEAD"], cwd);
+  return {
+    files,
+    filesChanged: files.length,
+    additions: files.reduce((s, f) => s + f.additions, 0),
+    deletions: files.reduce((s, f) => s + f.deletions, 0),
+    baselineSha: baseline.slice(0, 40),
+    headSha: head.ok ? head.out.slice(0, 40) : null,
+  };
+}
+
 // 据工作模式准备 cwd：仓库→worktree / 工作目录→就地 / 空目录。失败抛错。
 async function prepareWorkdir(work: WorkSpec, issueId: string): Promise<string> {
   if (work.mode === "dir") {
@@ -1138,6 +1209,8 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       });
       return;
     }
+    // 变更可视化：拍 run 开始的快照基线（非 git 目录返回 null，结束时据此 diff 出本次改动）
+    const baselineSha = await snapshotRef(cwd).catch(() => null);
     const model = claim.agent?.model ?? null;
     // MCP 仅 claude（按需回拉更深上下文）；codex/opencode 走 prompt 内推送的上下文
     const mcpConfig = spec.mcp
@@ -1191,9 +1264,17 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     }
     await reporter.flush(); // 收尾，确保尾部事件全部送达
     if (r.ok) {
+      // 变更可视化：算本次运行的 git 改动（best-effort，不阻断完成）
+      const changes = baselineSha
+        ? await captureChanges(cwd, baselineSha).catch((err) => {
+            console.error(`抓取变更失败（忽略）：${(err as Error).message}`);
+            return null;
+          })
+        : null;
       await post(server, token, `/daemon/tasks/${taskId}/complete`, {
         summary: r.result,
         sessionId: r.sessionId,
+        changes,
         usage, // 权威成本/token → 服务端落 task_usage
       });
       console.log(`任务 ${taskId} 完成`);
