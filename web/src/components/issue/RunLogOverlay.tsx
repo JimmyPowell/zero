@@ -374,7 +374,7 @@ export function RunLogOverlay({
         {/* 顶部活动条：连续同类合并成按占比分段；hover 看标签、点击跳转并高亮、跑动末段脉冲 */}
         {segments.length > 0 && (
           <div className="px-5 pt-3 pb-1">
-            <div className="flex h-4 w-full items-stretch gap-px">
+            <div className="flex h-4 w-full items-stretch overflow-hidden rounded-full">
               {segments.map((s, i) => {
               const isSel = selectedSeq === s.startSeq;
               const label = eventChip({
@@ -389,7 +389,7 @@ export function RunLogOverlay({
                   onClick={() => selectSeg(s.startSeq)}
                   style={{ flexGrow: s.count }}
                   className={cn(
-                    "group relative h-full min-w-[3px] rounded-sm transition-all",
+                    "group relative h-full min-w-[5px] transition-all",
                     isSel
                       ? BAR_COLOR_ACTIVE[s.type]
                       : cn(BAR_COLOR[s.type], "opacity-70 hover:opacity-100"),
