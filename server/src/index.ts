@@ -12,6 +12,10 @@ import { skillRoutes } from "@/routes/skills";
 import { runtimeRoutes } from "@/routes/runtimes";
 import { daemonRoutes } from "@/routes/daemon";
 import { channelRoutes } from "@/routes/channels";
+import {
+  attachmentRoutes,
+  attachmentDownloadRoutes,
+} from "@/routes/attachments";
 import { startOutboxWorker } from "@/lib/outbox";
 import { startWecomBot } from "@/lib/channels/wecom-bot";
 import { startTelegramBot } from "@/lib/channels/telegram-bot";
@@ -38,7 +42,9 @@ app.route("/workspaces/:wsId/agents", agentRoutes);
 app.route("/workspaces/:wsId/skills", skillRoutes);
 app.route("/workspaces/:wsId/runtimes", runtimeRoutes);
 app.route("/workspaces/:wsId/channels", channelRoutes);
+app.route("/workspaces/:wsId/attachments", attachmentRoutes);
 app.route("/daemon", daemonRoutes);
+app.route("/attachments", attachmentDownloadRoutes);
 
 // 通知发件箱后台投递
 startOutboxWorker();

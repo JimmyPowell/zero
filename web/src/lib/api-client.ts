@@ -12,6 +12,11 @@ export function setToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+// 附件签名 URL 是相对路径（/attachments/:id?...），拼上 API 基址即可直接用于 <img>/下载
+export function attachmentUrl(signedPath: string): string {
+  return signedPath.startsWith("http") ? signedPath : `${API_BASE}${signedPath}`;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -165,6 +170,14 @@ export interface AssigneeRef {
   name: string | null;
 }
 
+export interface Attachment {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  url: string; // 签名相对路径，用 attachmentUrl() 拼全
+}
+
 export interface IssueEvent {
   id: string;
   kind: IssueEventKind;
@@ -177,6 +190,7 @@ export interface IssueEvent {
     | null;
   createdAt: string;
   actor: EventActor | null;
+  attachments?: Attachment[];
 }
 
 // ---- 执行（run / task）+ 细粒度执行日志 ----
@@ -547,11 +561,35 @@ export const api = {
       `/workspaces/${workspaceId}/issues/${id}/events`,
     ),
 
-  addComment: (workspaceId: string, id: string, body: string) =>
+  addComment: (
+    workspaceId: string,
+    id: string,
+    body: string,
+    attachmentIds?: string[],
+  ) =>
     request<{ event: IssueEvent }>(
       `/workspaces/${workspaceId}/issues/${id}/events`,
-      { method: "POST", body: { body } },
+      { method: "POST", body: { body, attachmentIds } },
     ),
+
+  // 上传附件（multipart，单独走 fetch 不经 JSON request 封装）
+  uploadAttachment: async (workspaceId: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/attachments`, {
+      method: "POST",
+      headers,
+      body: fd,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok)
+      throw new ApiError(res.status, (data?.error as string) ?? "上传失败");
+    return data as { attachment: Attachment };
+  },
 
   // ---- 执行（run）+ 执行日志 ----
   listRuns: (workspaceId: string, issueId: string) =>

@@ -2,6 +2,13 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 合并评论附件（feat/comment-attachments → main）🎉
+
+- 4 提交干净合并(merge-base e7ad60e)，**仅 `progress.md` 冲突**；迁移 `0017_attachment` 是 main(0016)之上的**纯追加**(无碰撞)；其余文件(daemon/schema/dispatch/issues/Timeline/api-client/ui-store/IssueDetailView)全部 auto-merge。
+- 无新增**必填** env：签名复用 `config.jwtSecret`；`ATTACHMENTS_DIR`(默认 `<server>/data/uploads`)、`ATTACH_MAX_BYTES`(默认25MB) 均有默认；`server/.gitignore` 加 `data/`。worktree 仅 `.env.example`，无 `.env` 需抢救。
+- 合并后校验：迁移 0017 应用、server/daemon/web typecheck + web build 全过。
+- **留待实测**：真实 agent 端到端读图/读文档(尤其图片，Claude/CodeBuddy 的 Read 喂视觉最稳)。Phase 2 未做：拖拽粘贴、对象存储、孤儿 TTL、配额、MCP `zero_fetch_attachment`。
+
 ## 2026-06-20 · 合并导航重构 + 需求看板（feat/nav-board → main）🎉
 
 - **侧边栏**：删"概览"+空"需求管理" → 合并为落地页「我的需求」(`/requirements`)；分个人区/平台区 + 分组小标题；标签清理（运行时/智能体/新建需求）。
@@ -21,6 +28,18 @@
 - 路由：`/`、`/overview` → `/requirements`；`OverviewView`→`RequirementsView`；删 `PlaceholderView`。
 - 校验：web typecheck + build 全过。commit：`b24f26b`(侧栏) + `049fd17`(看板)。
 - **待办 Phase 3**：列内拖拽排序需给 `issue` 表加 `position` 字段；过滤 tab / 排序 / 隐藏列。
+## 2026-06-20 · 评论附件（feat/comment-attachments 开发记录，已合并见顶部）
+
+让评论能附带文件（图片/文档/任意类型），并妥当交给执行的 agent。分支 `feat/comment-attachments`，合并由用户来。详见 [comment-attachments.md](./comment-attachments.md)。
+
+- **关键设计：小推大拉（混合）**。调研 Multica 走纯拉（agent 用 `multica` CLI 列+下载），但 Zero 的 agent 是裸 CLI 无此命令；纯推又会白下载大文件占盘。所以**分大小**：≤10MB 由 daemon 落到 `<cwd>/.zero/attachments/` 给路径（弱模型零动作直接读）；>10MB 不下、prompt 里给一条**现成 curl 命令**（短时效签名 URL，需要才下、不浪费、单步、全 provider 通用）。
+- **数据/存储**：新 `attachment` 表（随 issue/评论级联删）+ 迁移 0017；本地磁盘 `ATTACHMENTS_DIR`（key=`workspaces/{ws}/{uuid}{ext}`）；下载走 **HMAC 签名 URL**（`?exp&sig`，不暴露长期令牌），非图片强制 `Content-Disposition: attachment` + `nosniff`。
+- **Server**：`POST /workspaces/:ws/attachments`（multipart，25MB 上限）、`GET /attachments/:id`（签名）；`commentSchema` 加 `attachmentIds` 并在发评论时 link；events 列表 + `assembleContext` 都带附件（含 signedPath）。
+- **Daemon**：`materializeAttachments`（小落盘/大留 URL、文件名消毒、按名去重、失败退化为懒取）+ `buildPrompt` 加「Attached files」段（小给路径、大给 curl）。
+- **Web**：评论框附件按钮 + 待发 chip（名/大小/移除）+ 提交带 ids；时间线评论里**图片显缩略图、其它显下载 chip**。
+- **图片**：统一落盘给路径，能否"看懂"取决于 CLI 的图片读取能力（Claude/CodeBuddy 可靠）；vision content block 复杂，先不做。
+- **实测**：管线 e2e **12/12**（上传→link→事件列表带附件→签名下载，含无效签名 403/非图片强制下载/assembleContext 带附件且可拉取）；daemon `buildPrompt` 单测 **7/7**（小=路径、大=curl）；server/daemon/web `tsc` + web build 全过。测试数据已清。
+- **未做（Phase 2）**：拖拽粘贴、对象存储、孤儿 TTL、配额、MCP `zero_fetch_attachment` 工具。真实 agent 端到端（落盘后 agent 读图/文档）建议合并后由你实测。
 
 ## 2026-06-20 · 实现：克隆超时 + 状态(阻塞/图标) + 排队中反馈 🎉
 
