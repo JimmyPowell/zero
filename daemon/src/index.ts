@@ -214,6 +214,8 @@ interface Claim {
     attachments?: AttachmentMeta[];
     // 续接会话时，前 resumeFromIndex 条评论已在上一轮上下文里（增量推送用）
     resumeFromIndex?: number;
+    // Tier-0 常驻知识（pinned KB 文档）；buildPrompt 拼成「Team knowledge」段
+    knowledge?: { path: string; title: string | null; content: string }[];
   };
 }
 
@@ -661,6 +663,14 @@ export function buildPrompt(
   L.push("");
   L.push(`# Issue ZERO-${context?.issue.number}: ${context?.issue.title}`);
   if (context?.issue.description) L.push(context.issue.description);
+  const knowledge = context?.knowledge ?? [];
+  if (knowledge.length) {
+    L.push("\n## Team knowledge (always-on — follow these)");
+    for (const k of knowledge) {
+      L.push(`\n### ${k.title ?? k.path}`);
+      L.push(k.content);
+    }
+  }
   const all = context?.comments ?? [];
   const from = context?.resumeFromIndex ?? 0;
   const delta = !opts.full && from > 0 && from < all.length;
@@ -677,7 +687,7 @@ export function buildPrompt(
     for (const cm of shown) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
   }
   L.push(
-    "\nOn-demand context tools (MCP) if the above is insufficient: `zero_older_comments` (earlier comments beyond those shown) and `zero_prior_runs` (past runs' status/outcome on this issue). Prefer the context already given; call these only when you need more.",
+    "\nOn-demand tools (MCP): `zero_older_comments` (earlier comments), `zero_prior_runs` (past runs), `zero_search_knowledge` (search the team knowledge base), `zero_write_knowledge` (save a durable note/convention/gotcha to the knowledge base — use when asked to remember/沉淀 something). Prefer the context already given; call these only when needed.",
   );
   L.push(
     "\nThis run is NON-INTERACTIVE and single-shot: when you end your turn the run ENDS and you are NOT automatically resumed. Do not promise to \"report back in a minute\" or sleep/busy-wait. If you must wait for something and then continue, schedule a callback BEFORE ending: `zero_wake_me(after_sec, note)` to be re-invoked after a delay, or `zero_watch_pid(pid, note)` to be re-invoked when a long background job finishes. You resume with full session memory.",

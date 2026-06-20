@@ -11,6 +11,16 @@ import {
   BindingPicker,
   type BindingValue,
 } from "@/components/issue/BindingPicker";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheck,
+} from "@/components/ui/dropdown-menu";
+import { pillTrigger } from "@/components/issue/pill";
+import { FolderKanban, ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import {
   api,
@@ -20,6 +30,7 @@ import {
   type IssuePriority,
   type Member,
   type Agent,
+  type Project,
 } from "@/lib/api-client";
 
 export function CreateIssueDialog({
@@ -40,8 +51,10 @@ export function CreateIssueDialog({
   const [priority, setPriority] = useState<IssuePriority>("none");
   const [assignee, setAssignee] = useState<AssigneeValue>(null);
   const [binding, setBinding] = useState<BindingValue>({ kind: "none" });
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -52,10 +65,14 @@ export function CreateIssueDialog({
     void Promise.all([
       api.listMembers(workspaceId).catch(() => ({ members: [] as Member[] })),
       api.listAgents(workspaceId).catch(() => ({ agents: [] as Agent[] })),
-    ]).then(([m, a]) => {
+      api
+        .listProjects(workspaceId)
+        .catch(() => ({ projects: [] as Project[] })),
+    ]).then(([m, a, p]) => {
       if (!alive) return;
       setMembers(m.members);
       setAgents(a.agents);
+      setProjects(p.projects);
     });
     return () => {
       alive = false;
@@ -81,6 +98,7 @@ export function CreateIssueDialog({
     setBinding({ kind: "none" });
     setPriority("none");
     setAssignee(null);
+    setProjectId(null);
     setError(null);
   }
 
@@ -97,6 +115,7 @@ export function CreateIssueDialog({
         priority,
         assigneeType: assignee?.type,
         assigneeId: assignee?.id,
+        projectId: projectId ?? undefined,
         ...(binding.kind === "repo"
           ? { repoId: binding.repoId, baseBranch: binding.baseBranch }
           : {}),
@@ -156,6 +175,31 @@ export function CreateIssueDialog({
             value={assignee}
             onChange={setAssignee}
           />
+          <DropdownMenu>
+            <DropdownMenuTrigger className={pillTrigger}>
+              <FolderKanban className="size-3.5 text-muted-foreground" />
+              <span className={cn(!projectId && "text-muted-foreground")}>
+                {projects.find((p) => p.id === projectId)?.title ??
+                  t("projects.none")}
+              </span>
+              <ChevronDown className="size-3.5 text-muted-foreground" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[180px]">
+              <DropdownMenuItem onSelect={() => setProjectId(null)}>
+                <span className="flex-1">{t("projects.none")}</span>
+                <DropdownMenuCheck active={projectId == null} />
+              </DropdownMenuItem>
+              {projects.map((p) => (
+                <DropdownMenuItem
+                  key={p.id}
+                  onSelect={() => setProjectId(p.id)}
+                >
+                  <span className="flex-1 truncate">{p.title}</span>
+                  <DropdownMenuCheck active={projectId === p.id} />
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* 工作区绑定（仓库 / 工作目录 / 不绑） */}

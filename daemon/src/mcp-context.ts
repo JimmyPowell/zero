@@ -8,9 +8,14 @@ const TOKEN = process.env.ZERO_TOKEN ?? "";
 const ISSUE = process.env.ZERO_ISSUE_ID ?? "";
 const TASK = process.env.ZERO_TASK_ID ?? "";
 
-async function api(path: string): Promise<any> {
+async function api(path: string, reqBody?: unknown): Promise<any> {
   const r = await fetch(`${SERVER}${path}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
+    method: reqBody !== undefined ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      ...(reqBody !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: reqBody !== undefined ? JSON.stringify(reqBody) : undefined,
   });
   const t = await r.text();
   const body = t ? JSON.parse(t) : null;
@@ -100,6 +105,42 @@ const TOOLS = [
       required: ["pid"],
     },
   },
+  {
+    name: "zero_search_knowledge",
+    description:
+      "Search the TEAM KNOWLEDGE BASE (conventions, decisions, gotchas, runbooks) for this workspace. Use when you need team-specific rules/context not already in your prompt. Returns matching docs with snippets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to search for (keywords)." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "zero_write_knowledge",
+    description:
+      "Save a durable note to the TEAM KNOWLEDGE BASE (a convention, decision, gotcha or runbook worth remembering across issues). Use when the user asks to remember/沉淀 something, or when you discover a reusable rule. Defaults to this issue's project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Doc path ending in .md, e.g. decisions/auth.md or gotchas/staging-db.md",
+        },
+        content: {
+          type: "string",
+          description: "Markdown content; a few sentences, start with a # title.",
+        },
+        pinned: {
+          type: "boolean",
+          description:
+            "If true, always inject into future agent runs. Use sparingly, only for core always-apply rules.",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
 ];
 
 async function callTool(name: string, args: Record<string, any>): Promise<string> {
@@ -140,6 +181,20 @@ async function callTool(name: string, args: Record<string, any>): Promise<string
     if (d?.ok)
       return `已登记看护 PID ${pid}：它结束后自动唤醒你继续。注意该进程须脱离本会话（setsid/nohup/disown）才能在本轮 run 结束后存活；现在结束本轮 run 即可。`;
     return `登记失败：${d?.error ?? "未知错误"}`;
+  }
+  if (name === "zero_search_knowledge") {
+    const qs = new URLSearchParams();
+    qs.set("q", String(args.query ?? ""));
+    const d = await api(`/daemon/issues/${ISSUE}/knowledge?${qs}`);
+    return JSON.stringify(d.hits ?? [], null, 2);
+  }
+  if (name === "zero_write_knowledge") {
+    const d = await api(`/daemon/issues/${ISSUE}/knowledge/write`, {
+      path: args.path,
+      content: args.content,
+      pinned: args.pinned,
+    });
+    return `saved: ${d.path}`;
   }
   throw new Error(`unknown tool: ${name}`);
 }

@@ -104,6 +104,7 @@ export interface Issue {
   status: IssueStatus;
   priority: IssuePriority;
   assignee: IssueAssignee | null;
+  project: { id: string; title: string | null; slug: string | null } | null;
   createdAt: string;
   // 最新活动时间：任意事件（评论/模型回复/状态变更/执行）的最新时间，无事件回退创建时间
   lastActivityAt: string;
@@ -117,6 +118,7 @@ export interface CreateIssuePayload {
   priority?: IssuePriority;
   assigneeType?: "member" | "agent";
   assigneeId?: string;
+  projectId?: string;
   repoId?: string;
   baseBranch?: string;
   workDir?: string;
@@ -285,6 +287,7 @@ export interface UpdateIssuePayload {
   priority?: IssuePriority;
   assigneeType?: "member" | "agent" | null;
   assigneeId?: string | null;
+  projectId?: string | null;
   repoId?: string | null;
   baseBranch?: string | null;
   workDir?: string | null;
@@ -521,6 +524,82 @@ export interface UpsertChannelPayload {
   kind: "email";
   address: string;
   enabled?: boolean;
+}
+
+// ---- 项目（Project）----
+export type ProjectStatus =
+  | "planned"
+  | "in_progress"
+  | "paused"
+  | "completed"
+  | "cancelled";
+
+export interface Project {
+  id: string;
+  workspaceId: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  status: ProjectStatus;
+  leadType: "member" | "agent" | null;
+  leadId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectResource {
+  id: string;
+  projectId: string;
+  kind: string; // repo | knowledge | notion | gdoc | url | file …
+  ref: Record<string, unknown>;
+  label: string | null;
+  position: number;
+  createdAt: string;
+}
+
+export interface ProjectDetailResponse {
+  project: Project;
+  resources: ProjectResource[];
+}
+
+export interface CreateProjectPayload {
+  title: string;
+  slug?: string;
+  description?: string;
+  icon?: string;
+  status?: ProjectStatus;
+  leadId?: string;
+}
+
+export interface UpdateProjectPayload {
+  title?: string;
+  description?: string | null;
+  icon?: string | null;
+  status?: ProjectStatus;
+  leadId?: string | null;
+}
+
+export interface AddProjectResourcePayload {
+  kind: string;
+  ref: Record<string, unknown>;
+  label?: string;
+  position?: number;
+}
+
+// ---- 知识库（团队 markdown 文档）----
+export interface KbDoc {
+  id: string;
+  workspaceId: string;
+  projectId: string | null;
+  scope: "workspace" | "project";
+  path: string;
+  title: string | null;
+  pinned: boolean;
+  contentHash: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface AuthResponse {
@@ -801,5 +880,84 @@ export const api = {
     request<{ code: string }>(
       `/workspaces/${workspaceId}/channels/telegram/link-code`,
       { method: "POST", body: {} },
+    ),
+
+  // ---- 项目（Project）----
+  listProjects: (workspaceId: string) =>
+    request<{ projects: Project[] }>(`/workspaces/${workspaceId}/projects`),
+
+  createProject: (workspaceId: string, payload: CreateProjectPayload) =>
+    request<{ project: Project }>(`/workspaces/${workspaceId}/projects`, {
+      method: "POST",
+      body: payload,
+    }),
+
+  getProject: (workspaceId: string, id: string) =>
+    request<ProjectDetailResponse>(
+      `/workspaces/${workspaceId}/projects/${id}`,
+    ),
+
+  updateProject: (
+    workspaceId: string,
+    id: string,
+    patch: UpdateProjectPayload,
+  ) =>
+    request<{ project: Project }>(`/workspaces/${workspaceId}/projects/${id}`, {
+      method: "PATCH",
+      body: patch,
+    }),
+
+  deleteProject: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/projects/${id}`, {
+      method: "DELETE",
+    }),
+
+  addProjectResource: (
+    workspaceId: string,
+    id: string,
+    payload: AddProjectResourcePayload,
+  ) =>
+    request<{ resource: ProjectResource }>(
+      `/workspaces/${workspaceId}/projects/${id}/resources`,
+      { method: "POST", body: payload },
+    ),
+
+  deleteProjectResource: (workspaceId: string, id: string, rid: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/projects/${id}/resources/${rid}`,
+      { method: "DELETE" },
+    ),
+
+  // ---- 知识库 ----
+  listKbDocs: (workspaceId: string, projectId?: string) =>
+    request<{ docs: KbDoc[] }>(
+      `/workspaces/${workspaceId}/knowledge${
+        projectId ? `?projectId=${projectId}` : ""
+      }`,
+    ),
+
+  getKbDoc: (workspaceId: string, path: string) =>
+    request<{ path: string; content: string }>(
+      `/workspaces/${workspaceId}/knowledge/doc?path=${encodeURIComponent(path)}`,
+    ),
+
+  putKbDoc: (
+    workspaceId: string,
+    payload: {
+      path: string;
+      content: string;
+      projectId?: string | null;
+      pinned?: boolean;
+    },
+  ) =>
+    request<{ id: string; path: string }>(
+      `/workspaces/${workspaceId}/knowledge/doc`,
+      { method: "PUT", body: payload },
+    ),
+
+  deleteKbDoc: (workspaceId: string, path: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/knowledge/doc?path=${encodeURIComponent(path)}`,
+      { method: "DELETE" },
     ),
 };

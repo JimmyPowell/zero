@@ -2,6 +2,20 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 合并：项目层 + 知识库（feat/projects-knowledge → main）🎉
+
+17 提交（项目层 P-Proj-1/2/3：project/project_resource 表 + issue.projectId + projects.ts +
+ProjectsView；知识库 M1–M5：server 自管 git 仓库 + kb_doc + KnowledgeView + MCP
+zero_search_knowledge/zero_write_knowledge + Tier-0 注入）。
+- **迁移碰撞**：分支的 `0018_tan_human_cannonball`(项目) + `0019_lonely_lady_bullseye`(知识库)
+  与 main 的 0018(agent_wakeup)/0019(run_event_subagent) 撞号 → 弃分支两个、journal/snapshot 取
+  main、按合并后 schema 重生成为 **`0022_projects_knowledge`**(纯新增 project/project_resource/
+  kb_doc + issue.project_id，已应用)。dev DB 之前未建这些表，干净。
+- **代码冲突**：`mcp-context.ts`（4 个 MCP 工具：我的 wake/watch + 知识库 search/write 全保留）、
+  progress.md。其余（schema 并表、server/index 路由挂载、dispatch KB 注入、daemon、issues、
+  api-client、ui-store、README）自动合并。
+- KB 无必填 env（`kbDir` 默认 `<server>/data/kb`，已 gitignore）。三端 typecheck + web build 全过。
+
 ## 2026-06-20 · 合并：滚动导航 + 变更可视化（feat/scroll-nav、feat/file-diff-view → main）🎉
 
 - **feat/scroll-nav**：纯前端，对话右下角浮动滚动导航（ScrollNav）。零冲突。
@@ -76,6 +90,56 @@
 - 测试：端到端 25/25（MCP→端点→DB→真 sweeper 点燃→入队复用 session→进程看护→护栏全覆盖）。
 - 设计文档 [agent-continuation.md](./agent-continuation.md)。Phase 2（暂不做）：进程退出码/日志回传、
   轮询兜底、运行时级 kill-switch/配额、非 Claude provider 续跑工具。
+## 2026-06-20 · 实现：知识库 M1–M3 + M5-P1（KB 真可用）🎉
+
+团队 markdown 知识库，挂在项目层上。每阶段 typecheck / 真库验证 + 提交（隔离库 `zero_projkb` + 临时 `KB_DIR`，不碰 main 的 `zero` 库）。
+
+- **M1 存储**（`b7fbe6e`）：**server 自管 per-workspace git 仓库**（server 首次碰 fs/git）—— init / 写+commit / 读 / 删 / 列；路径安全（无穿越 /.git / 仅 .md）；`kb_doc` 索引表（scope ws|project、pinned、contentHash）；`config.kbDir`；迁移 0019。真库 7/7。
+- **M2 前端**（`71e898e`）：导航 + `/knowledge` —— 左列表（团队 / 项目分组）+ 右 markdown 编辑 / 预览 + 常驻勾选 / 保存 / 删除。
+- **M3a Tier-0 注入**（`98e3f4a`）：pinned 文档（ws 级 + issue 所属项目级）→ `assembleContext.knowledge` → daemon `buildPrompt` 渲染「Team knowledge」段，每次跑任务常驻给 agent。真库验证。
+- **M3b memory_search**（`078d905`）：`zero_search_knowledge` MCP 工具 + `/daemon/issues/:id/knowledge` 端点，agent 按需检索。真库验证。
+- **M5-P1 kb_write**（`c12e446`）：`zero_write_knowledge` MCP 工具 + 写端点，agent「帮我沉淀」即写库（默认归 issue 的项目）。
+- **闭环**：人写 / 编辑(M2) → git 落库(M1) → 常驻自动注入(M3a) → agent 搜(M3b) + 写(M5-P1)。
+
+**v1 取舍**：编辑器用 textarea + Markdown 预览（非 Milkdown WYSIWYG，留后续）；检索用 LIKE 式（非 FULLTEXT / 向量，语料大了再上）。
+
+**未做（更大块，待续）**：**M4** 外部 KB 接入（MCP host 消费 Notion/Obsidian + 把 Zero 记忆暴露成 MCP server）；**M5-P2** 自动蒸馏（定时后台从对话 / 运行提炼 → 审核队列）。
+
+**留待真机 e2e**：真实 agent 跑一次确认 prompt 带「Team knowledge」+ 三个 MCP 工具可调（机制已单测）。
+**合并待办**：本分支迁移 0018(project)/0019(kb_doc) 与 main 的 0018_agent_wakeup/0019_run_event_subagent 撞号，合并时重排。
+
+## 2026-06-20 · P-Proj-3 完成：issue 继承项目主仓库（项目层全部闭环 ✅）
+
+`dispatch.ts`：issue 无显式 repo/workDir 但归属项目时，继承 `project_resource(kind=repo,primary)` 当 work 来源；优先级 **issue 显式覆盖 > 项目主仓库 > 空**。真库 3/3 验证（继承 / 覆盖 / empty）。`ProjectDetailView` 资源区加「挂仓库」下拉（挂注册仓库为 primary）+ 主仓库徽标 + 移除。server + web typecheck/build 过。
+**至此项目层 P-Proj-1/2/3 端到端完成。** 下一大块 = **知识库 M1**（server 自管 git 仓库 —— server 首次碰 fs/git，架构新增点）。轻量收尾仍挂着：issue 详情改项目 + 需求按项目分组。
+
+## 2026-06-20 · P-Proj-2 完成：issue↔project 绑定 + 创建弹窗项目选择器
+
+`issues.ts` 接 projectId（create / update / list 过滤 / 详情，`validateProject` 校验属本工作空间）+ api-client `Issue.project`；`CreateIssueDialog` 属性行加项目下拉（FolderKanban pill），创建时带 projectId。server + web typecheck / build 全过。**剩（收尾）**：issue 详情改项目 + 需求按项目分组。**下一步**：P-Proj-3（issue 继承项目主仓库 → assembleContext）→ 知识库 M1 → 变更可视化 P-Diff-1。
+
+## 2026-06-20 · 实现：项目层 后端 + 前端（P-Proj-1 ✅ / P-Proj-2 前端 ✅）
+
+`feat/projects-knowledge`，每模块 typecheck / 真库验证 + 提交。
+
+- **P-Proj-1 后端**：schema（`project` + 多态 `project_resource` + `issue.projectId`，迁移 `0018`）+ CRUD 路由（`projects.ts`：项目增删改查 + 资源挂载；slug 自动唯一、lead 校验成员、删项目置空 issue.projectId）。**真库 4/4 验证**（建/读、slug 唯一、多态资源 ref JSON 往返、删项目置空 issue + 资源级联删）。
+- **P-Proj-2 前端**：侧栏导航（FolderKanban）+ `/projects` 列表 + `/projects/:id` 详情（信息 / 资源 / 编辑 / 删除）+ `CreateProjectDialog`；api-client（Project/ProjectResource 类型 + 方法）+ i18n（zh/en）。**web typecheck + build 全过**。
+- **⚠️ 共享 dev 库 `zero` 被另一分支污染**：库里有 `agent_wakeup` 表 + 22 条迁移（另一条在飞分支 agent_wakeup，迁移 0018–0021）。我的 `db:migrate` 在共享库是**空操作**（drizzle 按时间戳跳过我的 0018）→ **未污染共享库**；改用隔离库 `zero_projkb`（root 建 + 授权 zero）做验证。**迁移号 `0018` 与 agent_wakeup 撞号**，合并 main 时需把本分支迁移重排到其后。
+- **待续（P-Proj-2）**：issue↔project 绑定（后端 `issues.ts` 接 projectId + 创建弹窗 / 详情 picker + 需求按项目分组）。→ 然后 P-Proj-3（上下文继承）/ 知识库 M1 / 变更可视化 P-Diff-1。
+
+## 2026-06-20 · 启动：项目层 + 知识库 + 变更可视化（docs 先行，分两条分支）
+
+调研→多轮确认→docs。基于最新 main（`7b48b79`）拉两条分支，**未动 main**：
+- `feat/projects-knowledge`：项目层 + 知识库（共享 schema，见 [projects.md](./projects.md) + [knowledge-base.md](./knowledge-base.md)）
+- `feat/file-diff-view`：变更可视化（独立，设计在该分支的 `docs/file-diff-view.md`）
+
+**缘起**：补 Multica 两大公开吐槽——无跨 issue / 团队记忆（#838）、看不到改了哪些文件（#1579）。Zero 现状核实：**无 project 概念**（`schema.ts` 0 处）；无任何 diff / 文件视图；记忆只到单 issue。
+
+**三个定稿决策**：
+1. **项目层**：Workspace→Project→Issue；`project` + 多态 `project_resource`（代码仓库 / 知识库 / 外部KB 一表三用）+ `issue.projectId`。仿 Multica 但收敛。迁移从 `0018` 起。
+2. **知识库**：记忆 = **server 自管 per-workspace git 仓库**里的 markdown（`projects/<slug>/`，可镜像外部）+ 外部 KB（project_resource 指针 + MCP）+ 嵌入式 MIT 编辑器；注入走 `assembleContext` + `memory_search` MCP；蒸馏 P1 按需（`kb_write`）/ P2 定时 + 审核，**不绑 issue 关闭**。**自研薄层，不接 mem0/Letta 当引擎**（多一个 Python 运行时 + 向量 / 图库，非协议问题）。
+3. **变更可视化**：daemon 快照基线抓 diff → `task_change / task_file_change` + 复用预留的 `diff_ready` → `@git-diff-view/react`；+ B2 只读文件浏览（server 端 Shiki），`.env` / `.git` denylist。
+
+**架构新增点（已点头）**：server 此前不碰 fs / git，本期为知识库新增"git 仓库管理"能力。下一步：`P-Proj-1`（项目 schema / 迁移 / CRUD）+ `P-Diff-1`（daemon 抓 diff，另一分支）。
 
 ## 2026-06-20 · ⏳待办：容器化部署方案（docker-compose）—— 仅记录，不实现
 
