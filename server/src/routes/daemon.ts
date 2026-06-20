@@ -10,7 +10,7 @@ import { assembleContext } from "@/lib/dispatch";
 import { incomingRunEventSchema } from "@/lib/run-events";
 import { publish } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
-import { searchKnowledge } from "@/lib/kb";
+import { searchKnowledge, writeDoc } from "@/lib/kb";
 
 // daemon 用运行时令牌认证：Authorization: Bearer <token>
 type DaemonEnv = {
@@ -293,6 +293,45 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     const hits = await searchKnowledge(iss.workspaceId, c.req.query("q") ?? "");
     return c.json({ hits });
   })
+  // 把一篇知识沉淀进库（Tier-1 写，供 MCP zero_write_knowledge）。默认归当前 issue 的项目。
+  .post(
+    "/issues/:id/knowledge/write",
+    zValidator(
+      "json",
+      z.object({
+        path: z.string().trim().min(1).max(512),
+        content: z.string().max(2_000_000),
+        pinned: z.boolean().optional(),
+      }),
+    ),
+    async (c) => {
+      const rt = c.get("runtime");
+      const id = c.req.param("id");
+      const [iss] = await db
+        .select({
+          workspaceId: schema.issue.workspaceId,
+          projectId: schema.issue.projectId,
+        })
+        .from(schema.issue)
+        .where(eq(schema.issue.id, id))
+        .limit(1);
+      if (!iss || iss.workspaceId !== rt.workspaceId)
+        return c.json({ error: "issue 不存在或越权" }, 404);
+      const body = c.req.valid("json");
+      try {
+        const docId = await writeDoc({
+          workspaceId: iss.workspaceId,
+          path: body.path,
+          content: body.content,
+          projectId: iss.projectId ?? null,
+          pinned: body.pinned,
+        });
+        return c.json({ id: docId, path: body.path });
+      } catch (e) {
+        return c.json({ error: (e as Error).message }, 400);
+      }
+    },
+  )
   // 本 issue 历史运行（状态/起止/失败原因/agent），看过去几轮干了什么、有没有失败
   .get("/issues/:id/runs", async (c) => {
     const rt = c.get("runtime");

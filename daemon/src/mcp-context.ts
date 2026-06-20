@@ -7,9 +7,14 @@ const SERVER = process.env.ZERO_SERVER ?? "";
 const TOKEN = process.env.ZERO_TOKEN ?? "";
 const ISSUE = process.env.ZERO_ISSUE_ID ?? "";
 
-async function api(path: string): Promise<any> {
+async function api(path: string, reqBody?: unknown): Promise<any> {
   const r = await fetch(`${SERVER}${path}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
+    method: reqBody !== undefined ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      ...(reqBody !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: reqBody !== undefined ? JSON.stringify(reqBody) : undefined,
   });
   const t = await r.text();
   const body = t ? JSON.parse(t) : null;
@@ -60,6 +65,30 @@ const TOOLS = [
       required: ["query"],
     },
   },
+  {
+    name: "zero_write_knowledge",
+    description:
+      "Save a durable note to the TEAM KNOWLEDGE BASE (a convention, decision, gotcha or runbook worth remembering across issues). Use when the user asks to remember/沉淀 something, or when you discover a reusable rule. Defaults to this issue's project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Doc path ending in .md, e.g. decisions/auth.md or gotchas/staging-db.md",
+        },
+        content: {
+          type: "string",
+          description: "Markdown content; a few sentences, start with a # title.",
+        },
+        pinned: {
+          type: "boolean",
+          description:
+            "If true, always inject into future agent runs. Use sparingly, only for core always-apply rules.",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
 ];
 
 async function callTool(name: string, args: Record<string, any>): Promise<string> {
@@ -81,6 +110,14 @@ async function callTool(name: string, args: Record<string, any>): Promise<string
     qs.set("q", String(args.query ?? ""));
     const d = await api(`/daemon/issues/${ISSUE}/knowledge?${qs}`);
     return JSON.stringify(d.hits ?? [], null, 2);
+  }
+  if (name === "zero_write_knowledge") {
+    const d = await api(`/daemon/issues/${ISSUE}/knowledge/write`, {
+      path: args.path,
+      content: args.content,
+      pinned: args.pinned,
+    });
+    return `saved: ${d.path}`;
   }
   throw new Error(`unknown tool: ${name}`);
 }
