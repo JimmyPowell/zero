@@ -2,6 +2,21 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 启动：项目层 + 知识库 + 变更可视化（docs 先行，分两条分支）
+
+调研→多轮确认→docs。基于最新 main（`7b48b79`）拉两条分支，**未动 main**：
+- `feat/projects-knowledge`：项目层 + 知识库（共享 schema，见 [projects.md](./projects.md) + [knowledge-base.md](./knowledge-base.md)）
+- `feat/file-diff-view`：变更可视化（独立，设计在该分支的 `docs/file-diff-view.md`）
+
+**缘起**：补 Multica 两大公开吐槽——无跨 issue / 团队记忆（#838）、看不到改了哪些文件（#1579）。Zero 现状核实：**无 project 概念**（`schema.ts` 0 处）；无任何 diff / 文件视图；记忆只到单 issue。
+
+**三个定稿决策**：
+1. **项目层**：Workspace→Project→Issue；`project` + 多态 `project_resource`（代码仓库 / 知识库 / 外部KB 一表三用）+ `issue.projectId`。仿 Multica 但收敛。迁移从 `0018` 起。
+2. **知识库**：记忆 = **server 自管 per-workspace git 仓库**里的 markdown（`projects/<slug>/`，可镜像外部）+ 外部 KB（project_resource 指针 + MCP）+ 嵌入式 MIT 编辑器；注入走 `assembleContext` + `memory_search` MCP；蒸馏 P1 按需（`kb_write`）/ P2 定时 + 审核，**不绑 issue 关闭**。**自研薄层，不接 mem0/Letta 当引擎**（多一个 Python 运行时 + 向量 / 图库，非协议问题）。
+3. **变更可视化**：daemon 快照基线抓 diff → `task_change / task_file_change` + 复用预留的 `diff_ready` → `@git-diff-view/react`；+ B2 只读文件浏览（server 端 Shiki），`.env` / `.git` denylist。
+
+**架构新增点（已点头）**：server 此前不碰 fs / git，本期为知识库新增"git 仓库管理"能力。下一步：`P-Proj-1`（项目 schema / 迁移 / CRUD）+ `P-Diff-1`（daemon 抓 diff，另一分支）。
+
 ## 2026-06-20 · ⏳待办：容器化部署方案（docker-compose）—— 仅记录，不实现
 
 补进 [deployment.md](./deployment.md)。结论：**compose 只装控制平面三件套（server + DB + 前端），daemon 不进 compose**（它要 CLI/登录态/跑真实仓库，且纯出站主动拉，应是独立原生进程）。两个必须持久卷：MySQL 数据 + 附件目录（`ATTACHMENTS_DIR`）。前端三选一（推荐 Cloudflare Pages）。落地前先核实 Web 实时日志链路是否 SSE（怕 Cloudflare 100s 超时）。本次只写文档，不产出 Dockerfile/compose。

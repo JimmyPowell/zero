@@ -81,6 +81,11 @@ bun run src/index.ts run --server http://localhost:8787 --token <运行时令牌
 - [nav-and-board.md](./nav-and-board.md) —— 导航重构 + 需求看板
 - [status-and-queue-ux.md](./status-and-queue-ux.md) —— 状态机（含 blocked）与排队反馈
 
+**本期在建（docs 先行）**
+- [projects.md](./projects.md) —— 项目（Project）层：Workspace→Project→Issue + 多态 project_resource ⏳
+- [knowledge-base.md](./knowledge-base.md) —— 长期记忆 / 团队知识库：git-markdown + 嵌入编辑器 + MCP ⏳
+- 变更可视化（每次运行改了哪些文件 / 增减行 + 只读文件查看）→ 独立分支 `feat/file-diff-view` 的 `docs/file-diff-view.md` ⏳
+
 **运维 / 部署**
 - [deployment.md](./deployment.md) —— 跨机器拓扑 + 容器化部署方案 ⏳
 - [repo-clone-robustness.md](./repo-clone-robustness.md) —— 克隆 / 拉取超时与健壮性
