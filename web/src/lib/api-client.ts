@@ -242,6 +242,9 @@ export interface RunEventRow {
   type: RunEventType;
   tool: RunEventTool | null;
   toolName: string | null;
+  // 子代理结构化：tool_use 自身 id / 所属子代理父调用 id（用于折叠嵌套）
+  toolUseId?: string | null;
+  parentToolUseId?: string | null;
   text: string | null;
   detail?: string | null;
   payload?: unknown;

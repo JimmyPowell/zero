@@ -33,6 +33,9 @@ export const incomingRunEventSchema = z.object({
   toolName: z.string().max(128).nullish(),
   text: z.string().nullish(),
   detail: z.string().max(20000).nullish(),
+  // 子代理结构化：tool_use 自身 id / 所属子代理父调用 id
+  toolUseId: z.string().max(64).nullish(),
+  parentToolUseId: z.string().max(64).nullish(),
   payload: z.unknown().nullish(),
 });
 export type IncomingRunEvent = z.infer<typeof incomingRunEventSchema>;

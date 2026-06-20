@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Copy, Filter, X, Check, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -79,6 +79,13 @@ function eventChip(ev: RunEventRow): {
         mono: false,
       };
     case "tool_call":
+      // 子代理(Task/Agent)调用：独立配色 + 标签，与普通工具区分
+      if (ev.tool === "task")
+        return {
+          label: "子代理",
+          cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300",
+          mono: false,
+        };
       return {
         label: ev.toolName ?? ev.tool ?? "tool",
         cls: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300",
@@ -278,6 +285,26 @@ export function RunLogOverlay({
   }, [events, filter]);
   const segments = useMemo(() => buildSegments(shown), [shown]);
 
+  // 子代理嵌套：把带 parentToolUseId 的事件挂到对应父调用(Agent/Task)行下。
+  // 父行在当前筛选下不可见时，子事件"提升"为顶层渲染，避免被筛选吞掉。
+  const { topLevel, childrenByParent } = useMemo(() => {
+    const parentRows = new Map<string, RunEventRow>();
+    for (const e of shown)
+      if (e.toolUseId && !e.parentToolUseId) parentRows.set(e.toolUseId, e);
+    const kids = new Map<string, RunEventRow[]>();
+    const top: RunEventRow[] = [];
+    for (const e of shown) {
+      if (e.parentToolUseId && parentRows.has(e.parentToolUseId)) {
+        const a = kids.get(e.parentToolUseId) ?? [];
+        a.push(e);
+        kids.set(e.parentToolUseId, a);
+      } else {
+        top.push(e);
+      }
+    }
+    return { topLevel: top, childrenByParent: kids };
+  }, [shown]);
+
   const duration = fmtDuration(run);
   const pill = STATUS_PILL[status];
 
@@ -285,7 +312,8 @@ export function RunLogOverlay({
     const text = events
       .map((e) => {
         const c = eventChip(e);
-        return `#${e.seq + 1} [${c.label}] ${e.detail || e.text || ""}`;
+        const ind = e.parentToolUseId ? "    " : "";
+        return `${ind}#${e.seq + 1} [${c.label}] ${e.detail || e.text || ""}`;
       })
       .join("\n");
     try {
@@ -296,6 +324,91 @@ export function RunLogOverlay({
       /* ignore */
     }
   }
+
+  // 渲染一条事件行；子代理(Task/Agent)调用行可展开，把其内部步骤缩进嵌套在下方。
+  const renderRow = (e: RunEventRow, depth: number): ReactNode => {
+    const c = eventChip(e);
+    const kids = e.toolUseId ? (childrenByParent.get(e.toolUseId) ?? []) : [];
+    const hasKids = kids.length > 0;
+    const expandable = hasDetail(e) || hasKids;
+    const isOpen = expanded.has(e.seq);
+    return (
+      <li
+        key={e.seq}
+        ref={(el) => {
+          if (el) rowRefs.current.set(e.seq, el);
+          else rowRefs.current.delete(e.seq);
+        }}
+        className={cn(
+          "border-b border-border/40 transition-colors last:border-0",
+          selectedSeq === e.seq && "bg-[#2563eb]/5",
+        )}
+      >
+        <div
+          onClick={expandable ? () => toggleExpand(e.seq) : undefined}
+          style={depth ? { paddingLeft: `${0.75 + depth * 1.1}rem` } : undefined}
+          className={cn(
+            "flex items-start gap-2.5 px-3 py-2.5",
+            expandable && "cursor-pointer hover:bg-muted/40",
+          )}
+        >
+          {expandable ? (
+            <ChevronRight
+              className={cn(
+                "mt-1 size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
+                isOpen && "rotate-90",
+              )}
+            />
+          ) : (
+            <span className="mt-1 size-3.5 shrink-0" />
+          )}
+          <span
+            className={cn(
+              "mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium",
+              c.cls,
+            )}
+          >
+            {c.label}
+          </span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 break-words text-sm text-foreground",
+              isOpen ? "whitespace-pre-wrap" : "line-clamp-2",
+              c.mono && "font-mono text-[13px] text-muted-foreground",
+            )}
+          >
+            {e.text}
+          </span>
+          {hasKids && (
+            <span className="mt-0.5 shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+              {kids.length} {t("runlog.subSteps")}
+            </span>
+          )}
+          <span className="mt-0.5 shrink-0 font-mono text-xs text-muted-foreground/60">
+            #{e.seq + 1}
+          </span>
+        </div>
+        {hasDetail(e) && isOpen && (
+          <div
+            className="px-3 pb-3"
+            style={{ paddingLeft: `${2.4 + depth * 1.1}rem` }}
+          >
+            <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
+              {e.detail}
+            </pre>
+          </div>
+        )}
+        {hasKids && isOpen && (
+          <ol
+            className="flex flex-col border-l-2 border-indigo-300/50 dark:border-indigo-500/25"
+            style={{ marginLeft: `${1.15 + depth * 1.1}rem` }}
+          >
+            {kids.map((k) => renderRow(k, depth + 1))}
+          </ol>
+        )}
+      </li>
+    );
+  };
 
   return (
     <div
@@ -409,80 +522,15 @@ export function RunLogOverlay({
           </div>
         )}
 
-        {/* 事件列表 */}
+        {/* 事件列表（子代理步骤折叠嵌套在其调用行下） */}
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-          {shown.length === 0 ? (
+          {topLevel.length === 0 ? (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
               {t("runlog.empty")}
             </div>
           ) : (
             <ol className="flex flex-col">
-              {shown.map((e) => {
-                const c = eventChip(e);
-                const expandable = hasDetail(e);
-                const isOpen = expanded.has(e.seq);
-                return (
-                  <li
-                    key={e.seq}
-                    ref={(el) => {
-                      if (el) rowRefs.current.set(e.seq, el);
-                      else rowRefs.current.delete(e.seq);
-                    }}
-                    className={cn(
-                      "border-b border-border/40 transition-colors last:border-0",
-                      selectedSeq === e.seq && "bg-[#2563eb]/5",
-                    )}
-                  >
-                    <div
-                      onClick={
-                        expandable ? () => toggleExpand(e.seq) : undefined
-                      }
-                      className={cn(
-                        "flex items-start gap-2.5 px-3 py-2.5",
-                        expandable && "cursor-pointer hover:bg-muted/40",
-                      )}
-                    >
-                      {expandable ? (
-                        <ChevronRight
-                          className={cn(
-                            "mt-1 size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
-                            isOpen && "rotate-90",
-                          )}
-                        />
-                      ) : (
-                        <span className="mt-1 size-3.5 shrink-0" />
-                      )}
-                      <span
-                        className={cn(
-                          "mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium",
-                          c.cls,
-                        )}
-                      >
-                        {c.label}
-                      </span>
-                      <span
-                        className={cn(
-                          "min-w-0 flex-1 break-words text-sm text-foreground",
-                          isOpen ? "whitespace-pre-wrap" : "line-clamp-2",
-                          c.mono && "font-mono text-[13px] text-muted-foreground",
-                        )}
-                      >
-                        {e.text}
-                      </span>
-                      <span className="mt-0.5 shrink-0 font-mono text-xs text-muted-foreground/60">
-                        #{e.seq + 1}
-                      </span>
-                    </div>
-                    {expandable && isOpen && (
-                      <div className="px-3 pb-3 pl-[2.4rem]">
-                        <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
-                          {e.detail}
-                        </pre>
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
+              {topLevel.map((e) => renderRow(e, 0))}
             </ol>
           )}
         </div>

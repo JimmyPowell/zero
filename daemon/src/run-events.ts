@@ -25,6 +25,10 @@ export interface RunEvent {
   toolName?: string | null;
   text?: string | null; // 折叠态摘要（一行）
   detail?: string | null; // 展开态完整内容（命令/参数/输出/思考/文本）
+  // 子代理(sub-agent)结构化：toolUseId=该 tool_use 自身 id（Task/Agent 调用据此成组）；
+  // parentToolUseId=该事件所属子代理的父调用 id（子代理内部步骤带；顶层为空）。
+  toolUseId?: string | null;
+  parentToolUseId?: string | null;
   payload?: unknown;
 }
 

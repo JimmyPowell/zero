@@ -26,6 +26,7 @@ function normalizeTool(name: string): RunTool {
     case "WebFetch":
       return "search";
     case "Task":
+    case "Agent": // Claude Code 子代理启动工具（新版叫 Agent）
       return "task";
     default:
       return "other";
@@ -65,7 +66,11 @@ function toolCallText(name: string, input: unknown): string {
     case "Glob":
       return `Glob ${str(i.pattern)}`.trim();
     case "Task":
-      return `Task ${str(i.description ?? i.subagent_type)}`.trim();
+    case "Agent": {
+      const sub = str(i.subagent_type);
+      const desc = str(i.description);
+      return `子代理${sub ? ` ${sub}` : ""}${desc ? `：${desc}` : ""}`.trim();
+    }
     case "WebFetch":
       return `WebFetch ${str(i.url)}`.trim();
     case "WebSearch":
@@ -131,6 +136,9 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
   const out: RunEvent[] = [];
   if (!obj || typeof obj !== "object") return out;
   const o = obj as Record<string, any>;
+  // 子代理结构化：该流对象若带 parent_tool_use_id，说明它来自某子代理内部（属父 Task/Agent 调用）
+  const parentToolUseId =
+    typeof o.parent_tool_use_id === "string" ? o.parent_tool_use_id : null;
 
   switch (o.type) {
     case "system":
@@ -168,6 +176,7 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
             toolName: b.name,
             text: toolCallText(b.name, b.input),
             detail: toolCallDetail(b.name, b.input),
+            toolUseId: typeof b.id === "string" ? b.id : null, // 子代理据此把内部步骤挂到此调用下
             payload: capPayload(b),
           });
         }
@@ -229,5 +238,7 @@ export function claudeAdapter(obj: unknown): RunEvent[] {
       break;
     }
   }
+  // 来自子代理内部的事件，统一打上父调用 id（顶层事件不带）
+  if (parentToolUseId) for (const e of out) e.parentToolUseId = parentToolUseId;
   return out;
 }

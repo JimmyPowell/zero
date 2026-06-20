@@ -431,6 +431,9 @@ export const runEvent = mysqlTable(
     tool: varchar("tool", { length: 32 }),
     // 原始工具名（如 Bash / exec_command），保真用
     toolName: varchar("tool_name", { length: 128 }),
+    // 子代理结构化：tool_use 自身 id / 所属子代理的父调用 id（web 据此折叠嵌套）
+    toolUseId: varchar("tool_use_id", { length: 64 }),
+    parentToolUseId: varchar("parent_tool_use_id", { length: 64 }),
     text: text("text"), // 折叠态摘要（一行）
     // 展开态完整内容（与 provider 无关）：工具完整命令/参数、完整输出、完整思考、完整文本
     detail: text("detail"),

@@ -731,6 +731,8 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         type: schema.runEvent.type,
         tool: schema.runEvent.tool,
         toolName: schema.runEvent.toolName,
+        toolUseId: schema.runEvent.toolUseId,
+        parentToolUseId: schema.runEvent.parentToolUseId,
         text: schema.runEvent.text,
         detail: schema.runEvent.detail,
         payload: schema.runEvent.payload,
@@ -796,6 +798,8 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
           type: schema.runEvent.type,
           tool: schema.runEvent.tool,
           toolName: schema.runEvent.toolName,
+          toolUseId: schema.runEvent.toolUseId,
+          parentToolUseId: schema.runEvent.parentToolUseId,
           text: schema.runEvent.text,
           detail: schema.runEvent.detail,
         })

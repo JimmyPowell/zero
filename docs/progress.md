@@ -2,6 +2,35 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-20 · 实现：子代理结构化（B）🎉
+
+执行日志里子代理(sub-agent)步骤分层显示。真机抓 stream-json 确认：子代理启动工具
+新版叫 **`Agent`**（旧 adapter 只认 `Task`，原来被归成 other！），子代理内部消息带
+`parent_tool_use_id`。
+- `RunEvent`/`run_event` 加 `toolUseId`(tool_use 自身 id) + `parentToolUseId`(父调用 id)，
+  迁移 0019。`claude-adapter` 认 `Agent`(→tool:task，文案"子代理 X：Y") + 透传两字段。
+- daemon events 端点持久化 + SSE 带上；issues 回放/backlog select 带上。
+- `RunLogOverlay`：子代理步骤折叠缩进在其调用行下(独立靛蓝"子代理"chip + "N 步"角标 +
+  左侧色条)，筛选隐藏父行时子事件"提升"为顶层不丢。
+- 测试：端到端 15/15（adapter 按真机结构抽取→端点持久化→DB 回读→web 分组嵌套）。
+
+## 2026-06-20 · 实现：agent 自触发续跑（A）🎉
+
+补上实测暴露的"回调"缺口（无头单发 run 结束后 agent 无法自己回来；DB 实锤：5 个 task
+全靠人评论触发）。复用现成 session-resume，加"非人触发器"。
+- 机制：唤醒点燃 → 插系统评论(why) + `enqueueTaskForIssue`(复用 session resume + 去重)
+  → 系统评论经 `assembleContext` 自然进续跑上下文。
+- timer：MCP `zero_wake_me(after_sec)` → server sweeper 扫 `fire_at` 点燃（持久）。
+  process：MCP `zero_watch_pid(pid)` → daemon 探本机 pid 存活，死亡经 `/daemon/watches/sync`
+  上报点燃（脱离会话的长任务跑完叫醒 agent）。
+- 护栏：链深上限(连续自动续跑≥12 暂停等人)、注册上限(5)、延时[5,3600]s、状态闸
+  (仅活动态点燃)、enqueue 去重兜底。buildPrompt 显式告知 agent 单发执行模型 + 这两个工具。
+- schema agent_wakeup + 迁移 0018；lib/continuation.ts；daemon.ts(wake/watch/sync)；
+  startWakeupWorker；mcp-context 两工具 + ZERO_TASK_ID；daemon watcher 探活循环。
+- 测试：端到端 25/25（MCP→端点→DB→真 sweeper 点燃→入队复用 session→进程看护→护栏全覆盖）。
+- 设计文档 [agent-continuation.md](./agent-continuation.md)。Phase 2（暂不做）：进程退出码/日志回传、
+  轮询兜底、运行时级 kill-switch/配额、非 Claude provider 续跑工具。
+
 ## 2026-06-20 · ⏳待办：容器化部署方案（docker-compose）—— 仅记录，不实现
 
 补进 [deployment.md](./deployment.md)。结论：**compose 只装控制平面三件套（server + DB + 前端），daemon 不进 compose**（它要 CLI/登录态/跑真实仓库，且纯出站主动拉，应是独立原生进程）。两个必须持久卷：MySQL 数据 + 附件目录（`ATTACHMENTS_DIR`）。前端三选一（推荐 Cloudflare Pages）。落地前先核实 Web 实时日志链路是否 SSE（怕 Cloudflare 100s 超时）。本次只写文档，不产出 Dockerfile/compose。

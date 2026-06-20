@@ -510,6 +510,8 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         type: e.type,
         tool: e.tool ?? null,
         toolName: e.toolName ?? null,
+        toolUseId: e.toolUseId ?? null,
+        parentToolUseId: e.parentToolUseId ?? null,
         text: e.text != null ? e.text.slice(0, 8000) : null,
         detail: e.detail != null ? e.detail.slice(0, 20000) : null,
         payload: e.payload ?? null,
@@ -529,6 +531,8 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           type: r.type,
           tool: r.tool,
           toolName: r.toolName,
+          toolUseId: r.toolUseId,
+          parentToolUseId: r.parentToolUseId,
           text: r.text,
           detail: r.detail,
         });

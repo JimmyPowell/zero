@@ -134,6 +134,13 @@
       "when": 1781943602786,
       "tag": "0018_agent_wakeup",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1781944441589,
+      "tag": "0019_run_event_subagent",
+      "breakpoints": true
     }
   ]
 }
