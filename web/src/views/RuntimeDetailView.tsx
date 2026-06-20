@@ -8,6 +8,7 @@ import {
   Gauge,
   Server,
   Bot,
+  Terminal,
 } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
@@ -20,6 +21,7 @@ import { relativeTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import {
   api,
+  type AgentProvider,
   type RuntimeDetail,
   type RuntimeUsageDetail,
 } from "@/lib/api-client";
@@ -123,6 +125,10 @@ export function RuntimeDetailView() {
   const rt = detail.runtime;
   const maxDayCost = Math.max(0.0001, ...usage!.byDay.map((d) => d.costUsd));
   const ownerName = rt.isOwner ? t("runtime.you") : rt.ownerName ?? "—";
+  // daemon 上报的底层 coding CLI（与列表页同一份 capabilities）
+  const caps = Object.entries(rt.capabilities ?? {})
+    .filter(([, on]) => on)
+    .map(([k]) => k);
 
   return (
     <Panel>
@@ -199,6 +205,28 @@ export function RuntimeDetailView() {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* 发现的工具（daemon 上报的底层 coding CLI） */}
+        <div className="mt-6">
+          <SectionLabel>{t("runtime.secCaps")}</SectionLabel>
+          {caps.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+              {t("runtime.noCaps")}
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {caps.map((k) => (
+                <span
+                  key={k}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-sm text-foreground"
+                >
+                  <Terminal className="size-3.5 text-muted-foreground" />
+                  {providerLabel[k as AgentProvider] ?? k}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 触达范围 */}
