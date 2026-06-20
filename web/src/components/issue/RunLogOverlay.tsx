@@ -34,6 +34,17 @@ const BAR_COLOR: Record<RunEventType, string> = {
   error: "bg-red-400",
 };
 
+// 选中态：同色深一档（点击某段时该段加深、对应事件行高亮）
+const BAR_COLOR_ACTIVE: Record<RunEventType, string> = {
+  assistant_text: "bg-emerald-500",
+  thinking: "bg-teal-500",
+  tool_call: "bg-blue-500",
+  tool_result: "bg-slate-400 dark:bg-slate-500",
+  run_status: "bg-violet-500",
+  usage: "bg-amber-500",
+  error: "bg-red-500",
+};
+
 // 顶部活动条分段：连续同类事件合并成一段（宽度按事件数占比）
 type Seg = { type: RunEventType; startSeq: number; count: number };
 function buildSegments(evs: RunEventRow[]): Seg[] {
@@ -167,6 +178,7 @@ export function RunLogOverlay({
   const [filter, setFilter] = useState<FilterKey>("all");
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<number, HTMLLIElement>());
 
@@ -182,6 +194,12 @@ export function RunLogOverlay({
     rowRefs.current
       .get(seq)
       ?.scrollIntoView({ block: "center", behavior: "smooth" });
+
+  // 点击条带某段：选中（段加深 + 行高亮）并跳到该段首个事件
+  const selectSeg = (seq: number) => {
+    setSelectedSeq(seq);
+    scrollToSeq(seq);
+  };
 
   // 合并并按 seq 去重排序
   const upsert = (incoming: RunEventRow[]) =>
@@ -353,23 +371,39 @@ export function RunLogOverlay({
           </button>
         </div>
 
-        {/* 顶部活动条：连续同类合并成按占比分段，可点击跳转，跑动中末段脉冲 */}
+        {/* 顶部活动条：连续同类合并成按占比分段；hover 看标签、点击跳转并高亮、跑动末段脉冲 */}
         {segments.length > 0 && (
-          <div className="flex h-2 w-full items-stretch gap-px px-5 pt-3">
-            {segments.map((s, i) => (
-              <button
-                key={s.startSeq}
-                type="button"
-                title={`${eventChip({ type: s.type, toolName: null, tool: null } as RunEventRow).label} × ${s.count}`}
-                onClick={() => scrollToSeq(s.startSeq)}
-                style={{ flexGrow: s.count }}
-                className={cn(
-                  "h-full min-w-[3px] rounded-sm opacity-80 transition-opacity hover:opacity-100",
-                  BAR_COLOR[s.type],
-                  ACTIVE(status) && i === segments.length - 1 && "animate-pulse",
-                )}
-              />
-            ))}
+          <div className="flex h-4 w-full items-stretch gap-px px-5 pt-3">
+            {segments.map((s, i) => {
+              const isSel = selectedSeq === s.startSeq;
+              const label = eventChip({
+                type: s.type,
+                toolName: null,
+                tool: null,
+              } as RunEventRow).label;
+              return (
+                <button
+                  key={s.startSeq}
+                  type="button"
+                  onClick={() => selectSeg(s.startSeq)}
+                  style={{ flexGrow: s.count }}
+                  className={cn(
+                    "group relative h-full min-w-[3px] rounded-sm transition-all",
+                    isSel
+                      ? BAR_COLOR_ACTIVE[s.type]
+                      : cn(BAR_COLOR[s.type], "opacity-70 hover:opacity-100"),
+                    ACTIVE(status) &&
+                      i === segments.length - 1 &&
+                      "animate-pulse",
+                  )}
+                >
+                  {/* hover 提示：事件类型 × 次数 */}
+                  <span className="pointer-events-none absolute top-full left-1/2 z-20 mt-1.5 hidden -translate-x-1/2 rounded-md bg-foreground px-2 py-1 text-[11px] font-medium whitespace-nowrap text-background shadow-md group-hover:block">
+                    {label} × {s.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -392,7 +426,10 @@ export function RunLogOverlay({
                       if (el) rowRefs.current.set(e.seq, el);
                       else rowRefs.current.delete(e.seq);
                     }}
-                    className="border-b border-border/40 last:border-0"
+                    className={cn(
+                      "border-b border-border/40 transition-colors last:border-0",
+                      selectedSeq === e.seq && "bg-[#2563eb]/5",
+                    )}
                   >
                     <div
                       onClick={
