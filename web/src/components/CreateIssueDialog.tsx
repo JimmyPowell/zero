@@ -22,6 +22,8 @@ import { pillTrigger } from "@/components/issue/pill";
 import { FolderKanban, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
+import { toast } from "@/lib/toast-store";
+import { issueKey } from "@/lib/issue-meta";
 import {
   api,
   ApiError,
@@ -126,8 +128,16 @@ export function CreateIssueDialog({
       onCreated(issue);
       reset();
       onClose();
+      // 成功提示（右下角，可点击跳转到该需求详情）
+      toast.success({
+        title: t("toast.issueCreated"),
+        description: `${issueKey(issue.number)} ${issue.title}`,
+        to: `/issues/${issue.id}`,
+      });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "网络错误，请重试");
+      const msg = err instanceof ApiError ? err.message : "网络错误，请重试";
+      setError(msg);
+      toast.error({ title: t("toast.issueCreateFailed"), description: msg });
     } finally {
       setSubmitting(false);
     }

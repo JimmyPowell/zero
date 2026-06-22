@@ -22,6 +22,7 @@ import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { CreateWorkspaceDialog } from "@/components/CreateWorkspaceDialog";
 import { CreateIssueDialog } from "@/components/CreateIssueDialog";
 import { SearchCommand } from "@/components/SearchCommand";
+import { Toaster } from "@/components/ui/toaster";
 
 // 通过 Outlet context 让子视图也能打开“创建工作空间 / 新建需求 / 搜索”
 export interface LayoutContext {
@@ -320,6 +321,8 @@ export function Layout() {
           />
         </>
       )}
+
+      <Toaster />
     </div>
   );
 }
