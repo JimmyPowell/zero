@@ -198,6 +198,7 @@ interface Claim {
     name: string;
     provider: string;
     model: string | null;
+    effort: string | null; // 推理强度（仅 Claude 系注入 --effort）；null = 不注入
     instructions: string | null;
     skills?: SkillSpec[];
   };
@@ -744,6 +745,7 @@ async function runClaudeLike(
   cwd: string,
   opts: {
     model?: string | null;
+    effort?: string | null;
     sessionId?: string | null;
     mcpConfig?: string;
     signal?: AbortSignal;
@@ -770,6 +772,9 @@ async function runClaudeLike(
     "AskUserQuestion",
   ];
   if (opts.model) cmd.push("--model", opts.model);
+  // 推理强度：Claude Code / CodeBuddy 原生 `--effort <level>`（low/medium/high/xhigh/max，
+  // codebuddy 另支持 minimal）。无头 -p 模式可用；非法值 CLI 自身会忽略并回退默认。
+  if (opts.effort) cmd.push("--effort", opts.effort);
   if (opts.sessionId) cmd.push("--resume", opts.sessionId);
   // §3.1 注入 Zero 上下文 MCP（按需回拉更深上下文）；skip-permissions 下工具免确认
   if (opts.mcpConfig) cmd.push("--mcp-config", opts.mcpConfig);
@@ -870,6 +875,8 @@ interface RunResult {
 }
 type RunOpts = {
   model?: string | null;
+  // 推理强度：仅 Claude 系 runner 注入 `--effort`；其它 provider 忽略本字段。
+  effort?: string | null;
   sessionId?: string | null;
   mcpConfig?: string;
   // 取消任务：abort 时杀掉 agent 子进程（Bun.spawn 原生支持 signal）
@@ -1259,6 +1266,11 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     // 变更可视化：拍 run 开始的快照基线（非 git 目录返回 null，结束时据此 diff 出本次改动）
     const baselineSha = await gitHead(cwd).catch(() => null);
     const model = claim.agent?.model ?? null;
+    // 推理强度：仅 Claude 系 provider 注入（其它 runner 忽略 opts.effort）
+    const effort =
+      provider === "claude_code" || provider === "codebuddy"
+        ? (claim.agent?.effort ?? null)
+        : null;
     // MCP 仅 claude（按需回拉更深上下文）；codex/opencode 走 prompt 内推送的上下文
     const mcpConfig = spec.mcp
       ? writeMcpConfig(server, token, issueId, taskId)
@@ -1294,7 +1306,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     let r = await spec.runner(
       buildPrompt(claim, { full: !priorSession, attachments: resolvedAtts }),
       cwd,
-      { model, sessionId: priorSession, mcpConfig, signal: ac.signal },
+      { model, effort, sessionId: priorSession, mcpConfig, signal: ac.signal },
       reporter,
     );
     let usage = r.usage ?? null;
@@ -1310,7 +1322,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       r = await spec.runner(
         buildPrompt(claim, { full: true, attachments: resolvedAtts }),
         cwd,
-        { model, mcpConfig, signal: ac.signal },
+        { model, effort, mcpConfig, signal: ac.signal },
         reporter,
       );
       usage = mergeUsage(usage, r.usage ?? null); // 累计两次执行成本

@@ -290,6 +290,9 @@ export const agent = mysqlTable(
       .notNull()
       .default("claude_code"),
     model: varchar("model", { length: 128 }),
+    // 推理强度（仅 Claude 系 provider 注入：claude_code/codebuddy → `--effort`）。
+    // 可空 = 不注入，跟随 CLI 自身默认。取值 low/medium/high/xhigh/max（codebuddy 另支持 minimal）。
+    effort: varchar("effort", { length: 16 }),
     instructions: text("instructions"), // 系统指令 / 自定义提示（人格，常驻）
     runtimeId: char("runtime_id", { length: 36 }), // B2 预留：绑定的运行时
     createdAt: timestamp("created_at").notNull().defaultNow(),

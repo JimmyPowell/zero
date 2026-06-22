@@ -19,6 +19,7 @@ import {
   ApiError,
   type Agent,
   type AgentProvider,
+  type AgentEffort,
   type Runtime,
 } from "@/lib/api-client";
 
@@ -56,6 +57,13 @@ const modelSuggestions: Record<AgentProvider, string[]> = {
   kimi: [], // 留空用 default_model（裸名报 LLM not set）
 };
 
+// 推理强度仅 Claude 系 provider 注入（claude_code/codebuddy → `--effort`）。
+// claude_code 取值 low/medium/high/xhigh/max；codebuddy 另支持 minimal。其它 provider 不显示。
+const effortOptions: Partial<Record<AgentProvider, AgentEffort[]>> = {
+  claude_code: ["low", "medium", "high", "xhigh", "max"],
+  codebuddy: ["minimal", "low", "medium", "high", "xhigh", "max"],
+};
+
 export function CreateAgentDialog({
   open,
   workspaceId,
@@ -75,6 +83,7 @@ export function CreateAgentDialog({
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<AgentProvider>("claude_code");
   const [model, setModel] = useState("");
+  const [effort, setEffort] = useState<AgentEffort | null>(null);
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
@@ -88,6 +97,7 @@ export function CreateAgentDialog({
     setName(agent?.name ?? "");
     setProvider(agent?.provider ?? "claude_code");
     setModel(agent?.model ?? "");
+    setEffort(agent?.effort ?? null);
     setDescription(agent?.description ?? "");
     setInstructions(agent?.instructions ?? "");
     setRuntimeId(agent?.runtimeId ?? null);
@@ -127,12 +137,15 @@ export function CreateAgentDialog({
     setSubmitting(true);
     setError(null);
     try {
+      // 推理强度仅对 Claude 系 provider 有效；其它 provider 一律清空，避免存陈旧值
+      const effortValue = effortOptions[provider] ? effort : null;
       const saved = editing
         ? (
             await api.updateAgent(workspaceId, agent!.id, {
               name: name.trim(),
               provider,
               model: model.trim() || null,
+              effort: effortValue,
               instructions: instructions.trim() || null,
               description: description.trim() || null,
               runtimeId,
@@ -143,6 +156,7 @@ export function CreateAgentDialog({
               name: name.trim(),
               provider,
               model: model.trim() || undefined,
+              effort: effortValue ?? undefined,
               instructions: instructions.trim() || undefined,
               description: description.trim() || undefined,
               runtimeId,
@@ -287,6 +301,44 @@ export function CreateAgentDialog({
               </div>
             )}
           </label>
+
+          {/* 推理强度（仅 Claude 系 provider）：默认不注入 = 跟随 CLI 默认 */}
+          {effortOptions[provider] && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm text-muted-foreground">
+                {t("agents.effort")}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEffort(null)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    effort === null
+                      ? "border-primary/40 bg-primary/10 text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted/60",
+                  )}
+                >
+                  {t("agents.effortDefault")}
+                </button>
+                {effortOptions[provider]!.map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => setEffort(lvl)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs capitalize transition-colors",
+                      effort === lvl
+                        ? "border-primary/40 bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted/60",
+                    )}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
+            </label>
+          )}
 
           {/* 系统指令 */}
           <label className="flex flex-col gap-1.5">

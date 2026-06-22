@@ -1,0 +1,1 @@
+ALTER TABLE `agent` ADD `effort` varchar(16);

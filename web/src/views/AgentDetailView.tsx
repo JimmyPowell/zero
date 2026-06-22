@@ -176,6 +176,16 @@ export function AgentDetailView() {
               </p>
             </div>
             <div>
+              <p className="text-xs text-muted-foreground">{t("agents.effort")}</p>
+              <p className="mt-0.5 capitalize text-foreground">
+                {agent.effort || (
+                  <span className="text-muted-foreground">
+                    {t("agents.effortDefault")}
+                  </span>
+                )}
+              </p>
+            </div>
+            <div>
               <p className="text-xs text-muted-foreground">{t("agents.runtime")}</p>
               {runtime ? (
                 <button

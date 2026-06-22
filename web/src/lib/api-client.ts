@@ -307,6 +307,7 @@ export interface Agent {
   avatarUrl: string | null;
   provider: AgentProvider;
   model: string | null;
+  effort: AgentEffort | null;
   instructions: string | null;
   description: string | null;
   runtimeId: string | null;
@@ -314,10 +315,14 @@ export interface Agent {
   updatedAt: string;
 }
 
+// 推理强度（仅 Claude 系 provider 生效）；null = 跟随 CLI 默认。
+export type AgentEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface CreateAgentPayload {
   name: string;
   provider?: AgentProvider;
   model?: string;
+  effort?: AgentEffort;
   instructions?: string;
   description?: string;
   runtimeId?: string | null;
@@ -327,6 +332,7 @@ export interface UpdateAgentPayload {
   name?: string;
   provider?: AgentProvider;
   model?: string | null;
+  effort?: AgentEffort | null;
   instructions?: string | null;
   description?: string | null;
   runtimeId?: string | null;

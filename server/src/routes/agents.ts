@@ -18,10 +18,15 @@ const providerEnum = z.enum([
   "kimi",
 ]);
 
+// 推理强度：仅 Claude 系（claude_code/codebuddy）注入为 `--effort`；空串/缺省 = 不设。
+// codebuddy 另支持 minimal，这里统一收口为 Claude Code 官方取值集。
+const effortEnum = z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
 const createSchema = z.object({
   name: z.string().trim().min(1, "请输入智能体名称").max(64),
   provider: providerEnum.optional(),
   model: z.string().trim().max(128).optional(),
+  effort: effortEnum.optional(),
   instructions: z.string().max(20000).optional(),
   description: z.string().trim().max(2000).optional(),
   avatarUrl: z.string().trim().max(2000).optional(),
@@ -33,6 +38,7 @@ const updateSchema = z
     name: z.string().trim().min(1).max(64).optional(),
     provider: providerEnum.optional(),
     model: z.string().trim().max(128).nullable().optional(),
+    effort: effortEnum.nullable().optional(),
     instructions: z.string().max(20000).nullable().optional(),
     description: z.string().trim().max(2000).nullable().optional(),
     avatarUrl: z.string().trim().max(2000).nullable().optional(),
@@ -225,6 +231,7 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
       name: body.name,
       provider: body.provider ?? "claude_code",
       model: body.model ?? null,
+      effort: body.effort ?? null,
       instructions: body.instructions ?? null,
       description: body.description ?? null,
       avatarUrl: body.avatarUrl ?? null,
@@ -272,6 +279,7 @@ export const agentRoutes = new Hono<WorkspaceEnv>()
         ...(patch.name !== undefined ? { name: patch.name } : {}),
         ...(patch.provider !== undefined ? { provider: patch.provider } : {}),
         ...(patch.model !== undefined ? { model: patch.model } : {}),
+        ...(patch.effort !== undefined ? { effort: patch.effort } : {}),
         ...(patch.instructions !== undefined
           ? { instructions: patch.instructions }
           : {}),

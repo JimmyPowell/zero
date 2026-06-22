@@ -241,6 +241,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         name: schema.agent.name,
         provider: schema.agent.provider,
         model: schema.agent.model,
+        effort: schema.agent.effort,
         instructions: schema.agent.instructions,
       })
       .from(schema.agent)
