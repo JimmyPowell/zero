@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Paperclip, X } from "lucide-react";
+import { ArrowLeft, Paperclip, X, FolderKanban, ChevronDown } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,15 @@ import { StatusPicker } from "@/components/issue/StatusPicker";
 import { PriorityPicker } from "@/components/issue/PriorityPicker";
 import { AssigneePicker } from "@/components/issue/AssigneePicker";
 import { BindingPicker } from "@/components/issue/BindingPicker";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheck,
+} from "@/components/ui/dropdown-menu";
+import { pillTrigger } from "@/components/issue/pill";
+import { cn } from "@/lib/utils";
 import { Timeline } from "@/components/issue/Timeline";
 import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
 import { ScrollNav } from "@/components/issue/ScrollNav";
@@ -25,6 +34,7 @@ import {
   type IssueEvent,
   type Member,
   type Agent,
+  type Project,
   type RunSummary,
   type UpdateIssuePayload,
 } from "@/lib/api-client";
@@ -75,6 +85,7 @@ export function IssueDetailView() {
   const [openDiffTaskId, setOpenDiffTaskId] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [editTitle, setEditTitle] = useState("");
   const [comment, setComment] = useState("");
@@ -92,8 +103,9 @@ export function IssueDetailView() {
       api.listRuns(wsId, id).catch(() => ({ runs: [] as RunSummary[] })),
       api.listMembers(wsId).catch(() => ({ members: [] as Member[] })),
       api.listAgents(wsId).catch(() => ({ agents: [] as Agent[] })),
+      api.listProjects(wsId).catch(() => ({ projects: [] as Project[] })),
     ])
-      .then(([d, e, r, m, a]) => {
+      .then(([d, e, r, m, a, p]) => {
         if (!alive) return;
         setIssue(d.issue);
         setEditTitle(d.issue.title);
@@ -101,6 +113,7 @@ export function IssueDetailView() {
         setRuns(r.runs);
         setMembers(m.members);
         setAgents(a.agents);
+        setProjects(p.projects);
         setStatus("ready");
       })
       .catch(() => alive && setStatus("error"));
@@ -386,6 +399,37 @@ export function IssueDetailView() {
                   })
                 }
               />
+            </PropRow>
+            <PropRow label={t("prop.project")}>
+              <DropdownMenu>
+                <DropdownMenuTrigger className={pillTrigger}>
+                  <FolderKanban className="size-3.5 text-muted-foreground" />
+                  <span
+                    className={cn(
+                      "truncate",
+                      !issue.project && "text-muted-foreground",
+                    )}
+                  >
+                    {issue.project?.title ?? t("projects.none")}
+                  </span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[180px]">
+                  <DropdownMenuItem onSelect={() => void patch({ projectId: null })}>
+                    <span className="flex-1">{t("projects.none")}</span>
+                    <DropdownMenuCheck active={!issue.project} />
+                  </DropdownMenuItem>
+                  {projects.map((p) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onSelect={() => void patch({ projectId: p.id })}
+                    >
+                      <span className="flex-1 truncate">{p.title}</span>
+                      <DropdownMenuCheck active={issue.project?.id === p.id} />
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </PropRow>
           </div>
 
