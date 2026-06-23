@@ -18,6 +18,89 @@ import { publish } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
 import { searchKnowledge, writeDoc } from "@/lib/kb";
 
+// 变更可视化：一次 run 的改动协议（/complete 与 /fail 共用）
+const changesSchema = z
+  .object({
+    files: z.array(
+      z.object({
+        path: z.string(),
+        status: z.enum(["added", "modified", "deleted", "renamed"]),
+        additions: z.number().int(),
+        deletions: z.number().int(),
+        isBinary: z.boolean(),
+        patch: z.string().optional(),
+        oldPath: z.string().optional(),
+      }),
+    ),
+    filesChanged: z.number().int(),
+    additions: z.number().int(),
+    deletions: z.number().int(),
+    baselineSha: z.string().nullable().optional(),
+    headSha: z.string().nullable().optional(),
+  })
+  .nullable()
+  .optional();
+
+// 落库一次 run 的改动（task_change + task_file_change + diff_ready 时间线事件）。
+// /complete 与 /fail 共用 —— 失败 / 部分完成的 run 也能看到 agent 改了哪些文件。重发幂等。
+async function persistChanges(
+  tk: schema.Task,
+  changes: z.infer<typeof changesSchema>,
+): Promise<void> {
+  if (!changes || changes.files.length === 0) return;
+  await db
+    .delete(schema.taskFileChange)
+    .where(eq(schema.taskFileChange.taskId, tk.id));
+  await db
+    .insert(schema.taskChange)
+    .values({
+      taskId: tk.id,
+      workspaceId: tk.workspaceId,
+      issueId: tk.issueId,
+      filesChanged: changes.filesChanged,
+      additions: changes.additions,
+      deletions: changes.deletions,
+      baselineSha: changes.baselineSha ?? null,
+      headSha: changes.headSha ?? null,
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        filesChanged: changes.filesChanged,
+        additions: changes.additions,
+        deletions: changes.deletions,
+        baselineSha: changes.baselineSha ?? null,
+        headSha: changes.headSha ?? null,
+      },
+    });
+  await db.insert(schema.taskFileChange).values(
+    changes.files.map((f) => ({
+      id: crypto.randomUUID(),
+      taskId: tk.id,
+      path: f.path,
+      oldPath: f.oldPath ?? null,
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      isBinary: f.isBinary,
+      patch: f.patch ?? null,
+    })),
+  );
+  await db.insert(schema.issueEvent).values({
+    id: crypto.randomUUID(),
+    issueId: tk.issueId,
+    workspaceId: tk.workspaceId,
+    actorType: "agent",
+    actorId: tk.agentId,
+    kind: "diff_ready",
+    meta: {
+      taskId: tk.id,
+      filesChanged: changes.filesChanged,
+      additions: changes.additions,
+      deletions: changes.deletions,
+    },
+  });
+}
+
 // daemon 用运行时令牌认证：Authorization: Bearer <token>
 type DaemonEnv = {
   Variables: { runtime: schema.Runtime };
@@ -631,27 +714,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         summary: z.string().optional(),
         sessionId: z.string().optional(),
         usage: usageSchema,
-        changes: z
-          .object({
-            files: z.array(
-              z.object({
-                path: z.string(),
-                status: z.enum(["added", "modified", "deleted", "renamed"]),
-                additions: z.number().int(),
-                deletions: z.number().int(),
-                isBinary: z.boolean(),
-                patch: z.string().optional(),
-                oldPath: z.string().optional(),
-              }),
-            ),
-            filesChanged: z.number().int(),
-            additions: z.number().int(),
-            deletions: z.number().int(),
-            baselineSha: z.string().nullable().optional(),
-            headSha: z.string().nullable().optional(),
-          })
-          .nullable()
-          .optional(),
+        changes: changesSchema,
       }),
     ),
     async (c) => {
@@ -696,59 +759,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .where(eq(schema.task.id, id));
 
       // 变更可视化：落 task_change + task_file_change，并写 diff_ready 时间线事件
-      if (changes && changes.files.length > 0) {
-        await db
-          .delete(schema.taskFileChange)
-          .where(eq(schema.taskFileChange.taskId, tk.id)); // 重发幂等
-        await db
-          .insert(schema.taskChange)
-          .values({
-            taskId: tk.id,
-            workspaceId: tk.workspaceId,
-            issueId: tk.issueId,
-            filesChanged: changes.filesChanged,
-            additions: changes.additions,
-            deletions: changes.deletions,
-            baselineSha: changes.baselineSha ?? null,
-            headSha: changes.headSha ?? null,
-          })
-          .onDuplicateKeyUpdate({
-            set: {
-              filesChanged: changes.filesChanged,
-              additions: changes.additions,
-              deletions: changes.deletions,
-              baselineSha: changes.baselineSha ?? null,
-              headSha: changes.headSha ?? null,
-            },
-          });
-        await db.insert(schema.taskFileChange).values(
-          changes.files.map((f) => ({
-            id: crypto.randomUUID(),
-            taskId: tk.id,
-            path: f.path,
-            oldPath: f.oldPath ?? null,
-            status: f.status,
-            additions: f.additions,
-            deletions: f.deletions,
-            isBinary: f.isBinary,
-            patch: f.patch ?? null,
-          })),
-        );
-        await db.insert(schema.issueEvent).values({
-          id: crypto.randomUUID(),
-          issueId: tk.issueId,
-          workspaceId: tk.workspaceId,
-          actorType: "agent",
-          actorId: tk.agentId,
-          kind: "diff_ready",
-          meta: {
-            taskId: tk.id,
-            filesChanged: changes.filesChanged,
-            additions: changes.additions,
-            deletions: changes.deletions,
-          },
-        });
-      }
+      await persistChanges(tk, changes);
 
       // 用量/成本落库（一个 task 一行；重发幂等更新）
       if (usage) {
@@ -806,7 +817,10 @@ export const daemonRoutes = new Hono<DaemonEnv>()
   // 失败：写 run_failed
   .post(
     "/tasks/:id/fail",
-    zValidator("json", z.object({ error: z.string().optional() })),
+    zValidator(
+      "json",
+      z.object({ error: z.string().optional(), changes: changesSchema }),
+    ),
     async (c) => {
       const rt = c.get("runtime");
       const id = c.req.param("id");
@@ -816,7 +830,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         .where(and(eq(schema.task.id, id), eq(schema.task.runtimeId, rt.id)))
         .limit(1);
       if (!tk) return c.json({ error: "任务不存在" }, 404);
-      const { error } = c.req.valid("json");
+      const { error, changes } = c.req.valid("json");
 
       await db.insert(schema.issueEvent).values({
         id: crypto.randomUUID(),
@@ -828,6 +842,8 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         body: error ?? null,
         meta: { taskId: tk.id, ...(error ? { error } : {}) },
       });
+      // 失败 / 部分完成的 run 也落改动 —— agent 常改到一半才失败，得让这些改动可见
+      await persistChanges(tk, changes);
       await db
         .update(schema.task)
         .set({ status: "failed", finishedAt: new Date(), error: error ?? null })

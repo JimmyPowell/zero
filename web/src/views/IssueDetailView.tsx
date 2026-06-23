@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Paperclip, X, FolderKanban, ChevronDown } from "lucide-react";
 
@@ -20,7 +20,12 @@ import { cn } from "@/lib/utils";
 import { Timeline } from "@/components/issue/Timeline";
 import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
 import { ScrollNav } from "@/components/issue/ScrollNav";
-import { DiffOverlay } from "@/components/issue/DiffOverlay";
+// 懒加载：diff 查看器（含 @git-diff-view + lowlight 语法高亮）只在点开时才拉，不压初始包
+const DiffOverlay = lazy(() =>
+  import("@/components/issue/DiffOverlay").then((m) => ({
+    default: m.DiffOverlay,
+  })),
+);
 import { DescriptionField } from "@/components/issue/DescriptionField";
 import {
   ImageLightbox,
@@ -558,12 +563,14 @@ export function IssueDetailView() {
       />
     )}
     {openDiffTaskId && wsId && (
-      <DiffOverlay
-        workspaceId={wsId}
-        issueId={issue.id}
-        taskId={openDiffTaskId}
-        onClose={() => setOpenDiffTaskId(null)}
-      />
+      <Suspense fallback={null}>
+        <DiffOverlay
+          workspaceId={wsId}
+          issueId={issue.id}
+          taskId={openDiffTaskId}
+          onClose={() => setOpenDiffTaskId(null)}
+        />
+      </Suspense>
     )}
     {pendingLightbox != null && pendingImages[pendingLightbox] && (
       <ImageLightbox

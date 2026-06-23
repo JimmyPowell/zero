@@ -2,6 +2,37 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-23 · 变更可视化 v2：快照式追踪（学 codex，不依赖 git 仓库）+ diff 渲染升级（分支 feat/change-tracker）🎉
+
+**缘起**：原变更可视化把「工作目录必须已是 git 仓库」当前提（基线 = `git rev-parse HEAD`），导致
+4 种工作模式里**空目录 / 非 git 目录全黑屏**，且**脏 git 仓库会把 run 前的未提交改动算进本次**。
+学 OpenAI Codex 的思路——**内容快照当基线、进程内 diff、不绑 VCS**——但因 Zero 是「5 黑盒 CLI 编排器」
+（拦工具流会漏 shell/sed/codegen、又要为每个 provider 维护解析器），把快照源从「工具流」换成
+**「文件系统」**，provider 无关、catch-all。
+
+- **P1 · daemon `ChangeTracker`（`daemon/src/index.ts`，单文件改动，server/前端契约不变）**：
+  - 三引擎，输出一致：① **git 仓库** → `GIT_INDEX_FILE` 临时 index 把工作树拍成 tree 对象
+    （不碰用户 index/HEAD）；② **非 git 目录** → 工作树外的**影子 git-dir**（`~/.zero/snap`）当一次性
+    diff 引擎（用户目录不出现 `.git`）；③ **无 git 二进制** → 纯 JS walk+hash 快照 + `jsdiff` 出
+    unified diff（绝不黑屏，仅降级）。可 `ZERO_DIFF_ENGINE=js` 强制纯 JS。
+  - **基线挪到「技能/附件物化后、agent 跑前」** → Zero 注入的 `.claude`/`.zero` 进基线、不污染本次 diff。
+  - `-z` 安全解析 numstat/name-status（改名带 `oldPath`、二进制识别）；逐文件 patch（>200KB 留空）。
+  - **e2e（`daemon/test-change-tracker.ts`，真临时目录跑导出的 `captureBaseline`/`captureChanges`）**：
+    S1 git 仓库增/改/删/改名/二进制、S2 脏树污染隔离、S3 非 git 影子库 + node_modules 排除 + 无 `.git`、
+    S4 纯 JS 引擎 —— **25/25 通过**。daemon typecheck + `bun build --compile` 全过。
+- **P2 · 前端 diff 渲染升级（`web/src/components/issue/DiffOverlay.tsx`）**：手写彩色 diff →
+  **`@git-diff-view/react@0.1.6`**（React 19 安全，纯 diff 模式只喂 patch；GitHub 风格 + 内置 lowlight
+  语法高亮 + 大文件虚拟滚动）。加**统一/并排/换行**切换。**懒加载**（`IssueDetailView` 用 `lazy`+`Suspense`）
+  把 diff 查看器拆成独立 chunk（342KB gz），**主包 593KB→250KB gz**。web typecheck + vite build 过。
+- **P3（本期落地：捕获时机）**：改动捕获从「仅成功」扩到**成功 / 失败都抓** —— agent 常改到一半才失败，
+  这些部分改动也落到失败的 run 卡片上可见。server 抽 `persistChanges()` 共用，`/complete` 与 `/fail`
+  都落 `task_change`/`task_file_change` + `diff_ready`。server typecheck 过。
+  - **待续（已出方案，见 file-diff-view.md §六）**：实时增量 diff（事件触发 FS 重拍 → SSE 推 live 计数）、
+    只读在线文件浏览（daemon 本地只读 API + 跨机 daemon→server 同步）—— 需跑通整套栈 / 真 agent 才能验，
+    本期未做，避免上不可验证的代码。
+- **隔离开发**：线上 server/daemon/web 是 `start`/`serve.ts dist` 模式（**非热加载**），仍迁出
+  `feat/change-tracker` worktree 隔离开发，全程不碰线上 dist / 进程。**合并/部署待人工**（见下）。
+
 ## 2026-06-20 · 合并：项目层 + 知识库（feat/projects-knowledge → main）🎉
 
 17 提交（项目层 P-Proj-1/2/3：project/project_resource 表 + issue.projectId + projects.ts +
