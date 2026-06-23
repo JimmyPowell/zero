@@ -22,6 +22,10 @@ import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
 import { ScrollNav } from "@/components/issue/ScrollNav";
 import { DiffOverlay } from "@/components/issue/DiffOverlay";
 import { DescriptionField } from "@/components/issue/DescriptionField";
+import {
+  ImageLightbox,
+  type LightboxImage,
+} from "@/components/issue/ImageLightbox";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import { issuesActions } from "@/lib/issues-store";
@@ -29,6 +33,7 @@ import { issueKey } from "@/lib/issue-meta";
 import { relativeTime } from "@/lib/time";
 import {
   api,
+  attachmentUrl,
   type Attachment,
   type IssueDetail,
   type IssueEvent,
@@ -93,6 +98,7 @@ export function IssueDetailView() {
   const [pending, setPending] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [pendingLightbox, setPendingLightbox] = useState<number | null>(null);
 
   useEffect(() => {
     if (!wsId || !id) return;
@@ -253,6 +259,13 @@ export function IssueDetailView() {
   const runsById = Object.fromEntries(runs.map((r) => [r.taskId, r]));
   const openRun = openRunId ? runsById[openRunId] : null;
 
+  // 待发图片附件（用于 chip 缩略图 + 灯箱左右切换）；按 id 定位，避免同名误开
+  const pendingImageAtts = pending.filter((p) => p.mime.startsWith("image/"));
+  const pendingImages: LightboxImage[] = pendingImageAtts.map((p) => ({
+    url: attachmentUrl(p.url),
+    filename: p.filename,
+  }));
+
   return (
     <>
     <Panel className="overflow-hidden p-0">
@@ -315,32 +328,61 @@ export function IssueDetailView() {
 
             {/* 评论输入 */}
             <div className="mt-4">
-              {/* 待发附件 chip */}
+              {/* 待发附件：图片显缩略图（点开灯箱），其它显文件 chip */}
               {pending.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {pending.map((a) => (
-                    <span
-                      key={a.id}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-xs"
-                    >
-                      <Paperclip className="size-3 text-muted-foreground" />
-                      <span className="max-w-[160px] truncate text-foreground">
-                        {a.filename}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {fmtSize(a.size)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPending((p) => p.filter((x) => x.id !== a.id))
-                        }
-                        className="text-muted-foreground transition-colors hover:text-foreground"
+                <div className="mb-2 flex flex-wrap items-start gap-2">
+                  {pending.map((a) => {
+                    const remove = () =>
+                      setPending((p) => p.filter((x) => x.id !== a.id));
+                    if (a.mime.startsWith("image/")) {
+                      const imgIdx = pendingImageAtts.findIndex(
+                        (x) => x.id === a.id,
+                      );
+                      return (
+                        <div key={a.id} className="group relative">
+                          <button
+                            type="button"
+                            onClick={() => setPendingLightbox(imgIdx)}
+                            className="block cursor-zoom-in"
+                          >
+                            <img
+                              src={attachmentUrl(a.url)}
+                              alt={a.filename}
+                              className="size-16 rounded-lg border border-border object-cover transition-opacity hover:opacity-90"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={remove}
+                            className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </div>
+                      );
+                    }
+                    return (
+                      <span
+                        key={a.id}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-xs"
                       >
-                        <X className="size-3" />
-                      </button>
-                    </span>
-                  ))}
+                        <Paperclip className="size-3 text-muted-foreground" />
+                        <span className="max-w-[160px] truncate text-foreground">
+                          {a.filename}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {fmtSize(a.size)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={remove}
+                          className="text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
               <textarea
@@ -521,6 +563,14 @@ export function IssueDetailView() {
         issueId={issue.id}
         taskId={openDiffTaskId}
         onClose={() => setOpenDiffTaskId(null)}
+      />
+    )}
+    {pendingLightbox != null && pendingImages[pendingLightbox] && (
+      <ImageLightbox
+        images={pendingImages}
+        index={pendingLightbox}
+        onIndex={setPendingLightbox}
+        onClose={() => setPendingLightbox(null)}
       />
     )}
     </>

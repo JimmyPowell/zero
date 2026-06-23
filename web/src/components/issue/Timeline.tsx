@@ -1,7 +1,9 @@
+import { useMemo, useState } from "react";
 import { ChevronRight, Paperclip, FileDiff } from "lucide-react";
 
 import { ActorAvatar } from "@/components/ActorAvatar";
 import { Markdown } from "@/components/Markdown";
+import { ImageLightbox, type LightboxImage } from "@/components/issue/ImageLightbox";
 import { useUi } from "@/lib/ui-store";
 import { relativeTime } from "@/lib/time";
 import { statusMeta, priorityMeta } from "@/lib/issue-meta";
@@ -23,18 +25,28 @@ function fmtSize(n: number): string {
   return `${n}B`;
 }
 
-// 评论里的附件：图片显缩略图、其它显可下载 chip
-function AttachmentChip({ att }: { att: Attachment }) {
+// 评论里的附件：图片显缩略图（点开页内灯箱）、其它显可下载 chip
+function AttachmentChip({
+  att,
+  onOpenImage,
+}: {
+  att: Attachment;
+  onOpenImage?: (id: string) => void;
+}) {
   const href = attachmentUrl(att.url);
   if (att.mime.startsWith("image/")) {
     return (
-      <a href={href} target="_blank" rel="noreferrer" className="block">
+      <button
+        type="button"
+        onClick={() => onOpenImage?.(att.id)}
+        className="block cursor-zoom-in"
+      >
         <img
           src={href}
           alt={att.filename}
-          className="max-h-44 max-w-[220px] rounded-lg border border-border object-cover"
+          className="max-h-44 max-w-[220px] rounded-lg border border-border object-cover transition-opacity hover:opacity-90"
         />
-      </a>
+      </button>
     );
   }
   return (
@@ -206,6 +218,26 @@ export function Timeline({
 }) {
   const { t, locale } = useUi();
 
+  // 收集时间线里所有图片附件（按出现顺序）→ 灯箱可左右切换；id→序号便于点击定位
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const { images, idxById } = useMemo(() => {
+    const images: LightboxImage[] = [];
+    const idxById: Record<string, number> = {};
+    for (const ev of events) {
+      for (const a of ev.attachments ?? []) {
+        if (a.mime.startsWith("image/")) {
+          idxById[a.id] = images.length;
+          images.push({ url: attachmentUrl(a.url), filename: a.filename });
+        }
+      }
+    }
+    return { images, idxById };
+  }, [events]);
+  const openImage = (id: string) => {
+    const i = idxById[id];
+    if (i != null) setLightboxIdx(i);
+  };
+
   const statusLabel = (v?: string | null) =>
     v ? t(statusMeta[v as IssueStatus]?.labelKey ?? v) : "";
   const priorityLabel = (v?: string | null) =>
@@ -221,6 +253,7 @@ export function Timeline({
   );
 
   return (
+    <>
     <ol className="flex flex-col">
       {events.map((ev) => {
         const actorName = ev.actor?.name ?? t("timeline.system");
@@ -258,7 +291,11 @@ export function Timeline({
                       )}
                     >
                       {ev.attachments.map((a) => (
-                        <AttachmentChip key={a.id} att={a} />
+                        <AttachmentChip
+                          key={a.id}
+                          att={a}
+                          onOpenImage={openImage}
+                        />
                       ))}
                     </div>
                   )}
@@ -370,5 +407,14 @@ export function Timeline({
         );
       })}
     </ol>
+    {lightboxIdx != null && images[lightboxIdx] && (
+      <ImageLightbox
+        images={images}
+        index={lightboxIdx}
+        onIndex={setLightboxIdx}
+        onClose={() => setLightboxIdx(null)}
+      />
+    )}
+    </>
   );
 }
