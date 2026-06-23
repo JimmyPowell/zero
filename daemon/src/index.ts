@@ -11,12 +11,15 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+
+import { createPatch } from "diff";
 
 import { claudeAdapter } from "./claude-adapter";
 import { codexAdapter } from "./codex-adapter";
@@ -226,6 +229,7 @@ async function git(
   args: string[],
   cwd?: string,
   timeoutMs?: number,
+  env?: Record<string, string>,
 ): Promise<{ ok: boolean; out: string; err: string }> {
   const proc = Bun.spawn({
     cmd: ["git", ...args],
@@ -233,7 +237,7 @@ async function git(
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
-    env: process.env,
+    env: env ? { ...process.env, ...env } : process.env,
   });
   // 超时则 kill 子进程 —— 关键：否则克隆卡死会无限占住 daemon 槽位、冻住整个运行时
   let timedOut = false;
@@ -266,77 +270,389 @@ function sanitize(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
 }
 
-// 变更可视化：拍一个快照引用（含未提交/未跟踪，不改工作树）。
-// stash create 有改动时返回快照 commit；干净时退回 HEAD；非 git 仓库返回 null。
-async function gitHead(cwd: string): Promise<string | null> {
-  const r = await git(["rev-parse", "HEAD"], cwd);
-  return r.ok && r.out ? r.out : null;
-}
+// ===== 变更可视化：快照式变更追踪（学 codex —— 内容快照当基线，不依赖目录是 VCS）=====
+// 三引擎，对外契约完全一致（files[] + 逐文件 patch），server/前端无感：
+//   ① git 仓库     → 临时 index 把工作树拍成 tree 对象（不碰用户 index/HEAD）
+//   ② 非 git 目录   → 工作树外的「影子 git-dir」当一次性 diff 引擎（用户目录不出现 .git）
+//   ③ 无 git 二进制 → 纯 JS walk+hash 快照 + jsdiff 生成 unified diff（绝不黑屏，仅降级）
+// 基线在「物化技能/附件之后、agent 跑之前」拍 → Zero 注入的 .claude/.zero 进基线、不污染本次 diff。
+// 可用 env ZERO_DIFF_ENGINE=js 强制走纯 JS 引擎（测试/无 git 环境）。
+
+const SNAP_DIR = join(ZERO_DIR, "snap"); // 临时 index / 影子 git-dir（务必在工作树外，否则 index.lock 会被拍进快照）
+const PATCH_MAX = 200_000; // 单文件 patch 上限（超出留空，前端可懒取）
+// 非 git 目录快照 / 纯 JS 引擎共用的「别拍进来」目录名
+const SKIP_DIRS = [
+  "node_modules",
+  ".git",
+  ".zero",
+  ".claude",
+  "dist",
+  "build",
+  ".next",
+  ".turbo",
+  ".venv",
+  "__pycache__",
+  ".cache",
+];
+const SKIP_SET = new Set(SKIP_DIRS);
 
 type FileChange = {
   path: string;
-  status: "added" | "modified" | "deleted";
+  status: "added" | "modified" | "deleted" | "renamed";
   additions: number;
   deletions: number;
   isBinary: boolean;
   patch?: string;
+  oldPath?: string;
 };
+type ChangeSet = {
+  files: FileChange[];
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  baselineSha: string | null;
+  headSha: string | null;
+};
+type JsEntry = { hash: string; isBinary: boolean; text: string | null };
+type Baseline =
+  | { engine: "git"; gitDir: string | null; tree: string; head: string | null }
+  | { engine: "js"; files: Map<string, JsEntry> };
 
-// 算 baseline → 当前 的改动（每文件 ±行/状态 + 逐文件 unified patch）。best-effort，失败返回 null。
-async function captureChanges(cwd: string, baseline: string) {
-  const Q = ["-c", "core.quotePath=false"];
-  // 让未跟踪新文件在 diff 里现形（intent-to-add，不改文件内容）；完事 git reset 清掉
-  await git(["add", "-A", "-N"], cwd);
-  const ns = await git([...Q, "diff", "-M", "--numstat", baseline], cwd);
-  if (!ns.ok) {
-    await git(["reset", "-q"], cwd);
+async function hasGitBinary(): Promise<boolean> {
+  return (await git(["--version"])).ok;
+}
+async function isGitWorkTree(cwd: string): Promise<boolean> {
+  const r = await git(["rev-parse", "--is-inside-work-tree"], cwd);
+  return r.ok && r.out.trim() === "true";
+}
+
+// 用一次性临时 index 把 cwd 当前工作树拍成 tree 对象。gitDir 提供 → 影子库（带 --work-tree）。
+async function snapshotTree(
+  cwd: string,
+  gitDir: string | null,
+  excludesFile: string | null,
+): Promise<string | null> {
+  ensureDir(SNAP_DIR);
+  const indexFile = join(SNAP_DIR, `idx-${crypto.randomUUID()}`);
+  const env: Record<string, string> = { GIT_INDEX_FILE: indexFile };
+  if (gitDir) env.GIT_DIR = gitDir;
+  const pre: string[] = [];
+  if (gitDir) pre.push("--work-tree", cwd);
+  if (excludesFile) pre.push("-c", `core.excludesFile=${excludesFile}`);
+  await git([...pre, "add", "-A"], cwd, undefined, env);
+  const wt = await git([...pre, "write-tree"], cwd, undefined, env);
+  try {
+    rmSync(indexFile, { force: true });
+  } catch {
+    /* ignore */
+  }
+  return wt.ok && wt.out ? wt.out.trim() : null;
+}
+
+// 影子库默认排除（非 git 目录没 .gitignore 时，别把 node_modules 等拍进基线）
+function shadowExcludesFile(): string {
+  ensureDir(SNAP_DIR);
+  const f = join(SNAP_DIR, "shadow-excludes");
+  try {
+    writeFileSync(f, SKIP_DIRS.map((d) => `${d}/`).join("\n") + "\n");
+  } catch {
+    /* ignore */
+  }
+  return f;
+}
+
+// run 开始：拍基线。best-effort —— 全失败返回 null（本次不出 diff，但绝不阻断完成）。
+export async function captureBaseline(
+  cwd: string,
+  issueId: string,
+): Promise<Baseline | null> {
+  const force = process.env.ZERO_DIFF_ENGINE;
+  if (force !== "js" && (await hasGitBinary())) {
+    if (await isGitWorkTree(cwd)) {
+      const tree = await snapshotTree(cwd, null, null);
+      if (tree) {
+        const head = await git(["rev-parse", "HEAD"], cwd);
+        return {
+          engine: "git",
+          gitDir: null,
+          tree,
+          head: head.ok ? head.out.trim() : null,
+        };
+      }
+    }
+    // 非 git 目录 → 影子库（工作树外）
+    const gitDir = join(SNAP_DIR, `shadow-${sanitize(issueId)}.git`);
+    try {
+      rmSync(gitDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    const init = await git(["init", "-q"], cwd, undefined, { GIT_DIR: gitDir });
+    if (init.ok) {
+      const tree = await snapshotTree(cwd, gitDir, shadowExcludesFile());
+      if (tree) return { engine: "git", gitDir, tree, head: null };
+    }
+  }
+  // 无 git → 纯 JS 快照
+  try {
+    return { engine: "js", files: jsSnapshot(cwd) };
+  } catch {
     return null;
   }
-  const st = await git([...Q, "diff", "-M", "--name-status", baseline], cwd);
-  const statusMap = new Map<string, FileChange["status"]>();
-  for (const line of st.out.split("\n")) {
-    const tab = line.indexOf("\t");
-    if (tab < 0) continue;
-    const code = line.slice(0, tab).trim();
-    const p = line.slice(tab + 1);
-    statusMap.set(
-      p,
-      code.startsWith("A")
-        ? "added"
-        : code.startsWith("D")
-          ? "deleted"
-          : "modified",
-    );
+}
+
+// run 结束：对基线算本次 diff。best-effort，失败返回 null；收尾清理影子库。
+export async function captureChanges(
+  cwd: string,
+  baseline: Baseline,
+): Promise<ChangeSet | null> {
+  try {
+    if (baseline.engine === "git") return await gitDiffTrees(cwd, baseline);
+    return jsDiff(cwd, baseline.files);
+  } catch {
+    return null;
+  } finally {
+    if (baseline.engine === "git" && baseline.gitDir) {
+      try {
+        rmSync(baseline.gitDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
   }
+}
+
+// git 引擎：再拍一棵当前树，对基线树跑 numstat/name-status/逐文件 patch（-z 安全解析改名）。
+async function gitDiffTrees(
+  cwd: string,
+  base: { gitDir: string | null; tree: string; head: string | null },
+): Promise<ChangeSet | null> {
+  const env = base.gitDir ? { GIT_DIR: base.gitDir } : undefined;
+  const excl = base.gitDir ? shadowExcludesFile() : null;
+  const cur = await snapshotTree(cwd, base.gitDir, excl);
+  if (!cur) return null;
+  const Q = ["-c", "core.quotePath=false"];
+  const pre = base.gitDir ? ["--work-tree", cwd] : [];
+  const ns = await git(
+    [...Q, ...pre, "diff", "-M", "--numstat", "-z", base.tree, cur],
+    cwd,
+    undefined,
+    env,
+  );
+  if (!ns.ok) return null;
+  const st = await git(
+    [...Q, ...pre, "diff", "-M", "--name-status", "-z", base.tree, cur],
+    cwd,
+    undefined,
+    env,
+  );
+  // name-status -z：状态 + 改名 old/new（改名记录占 3 个 NUL 段：R### \0 old \0 new）
+  const statusMap = new Map<
+    string,
+    { status: FileChange["status"]; oldPath?: string }
+  >();
+  {
+    const t = st.out.split("\0");
+    let i = 0;
+    while (i < t.length) {
+      const code = t[i++];
+      if (!code) continue;
+      if (code[0] === "R" || code[0] === "C") {
+        const oldPath = t[i++];
+        const nw = t[i++];
+        statusMap.set(nw, { status: "renamed", oldPath });
+      } else {
+        const p = t[i++];
+        statusMap.set(p, {
+          status:
+            code[0] === "A" ? "added" : code[0] === "D" ? "deleted" : "modified",
+        });
+      }
+    }
+  }
+  // numstat -z：±行 + 二进制（改名记录 path 字段为空、后跟 old \0 new）
   const files: FileChange[] = [];
-  for (const line of ns.out.split("\n")) {
-    const parts = line.split("\t");
-    if (parts.length < 3) continue;
-    const isBinary = parts[0] === "-" || parts[1] === "-";
-    const path = parts.slice(2).join("\t");
-    files.push({
-      path,
-      status: statusMap.get(path) ?? "modified",
-      additions: isBinary ? 0 : parseInt(parts[0], 10) || 0,
-      deletions: isBinary ? 0 : parseInt(parts[1], 10) || 0,
-      isBinary,
-    });
+  {
+    const chunks = ns.out.split("\0");
+    let i = 0;
+    while (i < chunks.length) {
+      const head = chunks[i++];
+      if (!head) continue;
+      const tab1 = head.indexOf("\t");
+      const tab2 = head.indexOf("\t", tab1 + 1);
+      if (tab1 < 0 || tab2 < 0) continue;
+      const a = head.slice(0, tab1);
+      const d = head.slice(tab1 + 1, tab2);
+      let path = head.slice(tab2 + 1);
+      if (path === "") {
+        i++; // old
+        path = chunks[i++]; // new
+      }
+      const isBinary = a === "-" || d === "-";
+      const meta = statusMap.get(path) ?? { status: "modified" as const };
+      files.push({
+        path,
+        status: meta.status,
+        oldPath: meta.oldPath,
+        additions: isBinary ? 0 : parseInt(a, 10) || 0,
+        deletions: isBinary ? 0 : parseInt(d, 10) || 0,
+        isBinary,
+      });
+    }
   }
-  // 逐文件取 patch（二进制跳过；单文件超 200KB 留空，前端可后续懒取）
+  // 逐文件 patch（二进制跳过；改名需同时给 old/new 端点 git 才认得出改名）
   for (const f of files) {
     if (f.isBinary) continue;
-    const p = await git([...Q, "diff", "-M", baseline, "--", f.path], cwd);
-    if (p.ok && p.out.length <= 200_000) f.patch = p.out;
+    const args = [...Q, ...pre, "diff", "-M", base.tree, cur, "--"];
+    if (f.oldPath) args.push(f.oldPath, f.path);
+    else args.push(f.path);
+    const p = await git(args, cwd, undefined, env);
+    if (p.ok && p.out.length <= PATCH_MAX) f.patch = p.out;
   }
-  await git(["reset", "-q"], cwd); // 清掉 intent-to-add，不改工作树
-  const head = await git(["rev-parse", "HEAD"], cwd);
+  const head = base.gitDir ? null : await git(["rev-parse", "HEAD"], cwd);
   return {
     files,
     filesChanged: files.length,
     additions: files.reduce((s, f) => s + f.additions, 0),
     deletions: files.reduce((s, f) => s + f.deletions, 0),
-    baselineSha: baseline.slice(0, 40),
-    headSha: head.ok ? head.out.slice(0, 40) : null,
+    baselineSha: base.head ? base.head.slice(0, 40) : null,
+    headSha: head && head.ok ? head.out.trim().slice(0, 40) : null,
+  };
+}
+
+// ---- 纯 JS 引擎（无 git 二进制时的兜底）----
+
+function isBinaryBuf(buf: Buffer): boolean {
+  const n = Math.min(buf.length, 8000);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+
+// 递归 walk，剪掉 SKIP_DIRS；相对路径用 / 分隔
+function jsWalk(root: string, rel: string, out: string[]) {
+  let ents;
+  try {
+    ents = readdirSync(join(root, rel), { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of ents) {
+    const r = rel ? `${rel}/${ent.name}` : ent.name;
+    if (ent.isDirectory()) {
+      if (SKIP_SET.has(ent.name)) continue;
+      jsWalk(root, r, out);
+    } else if (ent.isFile()) {
+      out.push(r);
+    }
+  }
+}
+
+function jsSnapshot(cwd: string): Map<string, JsEntry> {
+  const paths: string[] = [];
+  jsWalk(cwd, "", paths);
+  const map = new Map<string, JsEntry>();
+  for (const p of paths) {
+    try {
+      const buf = readFileSync(join(cwd, p));
+      const isBinary = isBinaryBuf(buf);
+      const tooBig = buf.length > 1_000_000;
+      map.set(p, {
+        hash: String(Bun.hash(buf)),
+        isBinary,
+        text: isBinary || tooBig ? null : buf.toString("utf8"),
+      });
+    } catch {
+      /* 读不了就跳过 */
+    }
+  }
+  return map;
+}
+
+function countLines(s: string): number {
+  if (s === "") return 0;
+  const n = s.split("\n").length;
+  return s.endsWith("\n") ? n - 1 : n;
+}
+
+// 用 jsdiff 生成 unified patch，并按行首数 ±（排除 +++/--- 头，对标 codex 的数法）
+function jsPatch(
+  path: string,
+  oldText: string,
+  newText: string,
+): { patch: string; additions: number; deletions: number } {
+  const patch = createPatch(path, oldText, newText, "", "", { context: 3 });
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+    else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+  }
+  return { patch, additions, deletions };
+}
+
+function jsDiff(cwd: string, base: Map<string, JsEntry>): ChangeSet {
+  const cur = jsSnapshot(cwd);
+  const files: FileChange[] = [];
+  const seen = new Set<string>();
+  for (const [p, b] of base) {
+    seen.add(p);
+    const c = cur.get(p);
+    if (!c) {
+      // 删除
+      const binary = b.isBinary;
+      files.push({
+        path: p,
+        status: "deleted",
+        additions: 0,
+        deletions: binary || b.text == null ? 0 : countLines(b.text),
+        isBinary: binary,
+        patch:
+          binary || b.text == null ? undefined : jsPatch(p, b.text, "").patch,
+      });
+    } else if (c.hash !== b.hash) {
+      // 修改
+      const binary = b.isBinary || c.isBinary;
+      if (binary || b.text == null || c.text == null) {
+        files.push({
+          path: p,
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          isBinary: true,
+        });
+      } else {
+        const { patch, additions, deletions } = jsPatch(p, b.text, c.text);
+        files.push({
+          path: p,
+          status: "modified",
+          additions,
+          deletions,
+          isBinary: false,
+          patch: patch.length <= PATCH_MAX ? patch : undefined,
+        });
+      }
+    }
+  }
+  for (const [p, c] of cur) {
+    if (seen.has(p)) continue;
+    const binary = c.isBinary;
+    files.push({
+      path: p,
+      status: "added",
+      additions: binary || c.text == null ? 0 : countLines(c.text),
+      deletions: 0,
+      isBinary: binary,
+      patch: binary || c.text == null ? undefined : jsPatch(p, "", c.text).patch,
+    });
+  }
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return {
+    files,
+    filesChanged: files.length,
+    additions: files.reduce((s, f) => s + f.additions, 0),
+    deletions: files.reduce((s, f) => s + f.deletions, 0),
+    baselineSha: null,
+    headSha: null,
   };
 }
 
@@ -1263,8 +1579,6 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       });
       return;
     }
-    // 变更可视化：拍 run 开始的快照基线（非 git 目录返回 null，结束时据此 diff 出本次改动）
-    const baselineSha = await gitHead(cwd).catch(() => null);
     const model = claim.agent?.model ?? null;
     // 推理强度：仅 Claude 系 provider 注入（其它 runner 忽略 opts.effort）
     const effort =
@@ -1298,6 +1612,9 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     } catch (err) {
       console.error(`物化附件失败（忽略继续）：${(err as Error).message}`);
     }
+    // 变更可视化：在「技能/附件物化后、agent 跑前」拍快照基线 —— Zero 注入的 .claude/.zero
+    // 进基线、不污染本次 diff；非 git 目录走影子库、无 git 走纯 JS，任何工作模式都有基线。
+    const baseline = await captureBaseline(cwd, issueId).catch(() => null);
     // 实时上报执行流（reporter 拥有单调 seq，跨重跑连续，不与回退冲突）
     const reporter = makeReporter(async (events) => {
       await post(server, token, `/daemon/tasks/${taskId}/events`, { events });
@@ -1333,14 +1650,15 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       console.log(`任务 ${taskId} 已取消（不回报结果）`);
       return;
     }
+    // 变更可视化：算本次运行的改动（best-effort，不阻断）——成功 / 失败都抓：
+    // agent 常改到一半才失败，这些部分改动也得让用户看到（落到失败的 run 卡片上）。
+    const changes = baseline
+      ? await captureChanges(cwd, baseline).catch((err) => {
+          console.error(`抓取变更失败（忽略）：${(err as Error).message}`);
+          return null;
+        })
+      : null;
     if (r.ok) {
-      // 变更可视化：算本次运行的 git 改动（best-effort，不阻断完成）
-      const changes = baselineSha
-        ? await captureChanges(cwd, baselineSha).catch((err) => {
-            console.error(`抓取变更失败（忽略）：${(err as Error).message}`);
-            return null;
-          })
-        : null;
       await post(server, token, `/daemon/tasks/${taskId}/complete`, {
         summary: r.result,
         sessionId: r.sessionId,
@@ -1351,6 +1669,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     } else {
       await post(server, token, `/daemon/tasks/${taskId}/fail`, {
         error: r.error,
+        changes,
       });
       console.log(`任务 ${taskId} 失败：${r.error}`);
     }

@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { X, FileDiff } from "lucide-react";
+import { DiffView, DiffModeEnum, getLang } from "@git-diff-view/react";
+import "@git-diff-view/react/styles/diff-view.css";
 
 import { useUi } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
@@ -22,32 +24,50 @@ const statusBadge: Record<string, { label: string; cls: string }> = {
   renamed: { label: "R", cls: "bg-[#2563eb]/15 text-[#2563eb]" },
 };
 
-// 手写彩色 unified diff（直接吃 git patch，按行首着色）
-function DiffBody({ patch }: { patch: string }) {
+// 用 @git-diff-view/react 渲染单文件 git patch：GitHub 风格、内置 lowlight 语法高亮、
+// 大文件虚拟滚动。只喂 patch（hunks）→ 纯 diff 模式，无需整文件内容。
+function DiffBody({
+  file,
+  mode,
+  wrap,
+  dark,
+}: {
+  file: RunFileChange;
+  mode: DiffModeEnum;
+  wrap: boolean;
+  dark: boolean;
+}) {
+  const newName = file.path;
+  const oldName = file.oldPath ?? file.path;
   return (
-    <div className="overflow-x-auto bg-card font-mono text-xs leading-[1.5]">
-      {patch.split("\n").map((line, i) => {
-        let cls = "text-foreground/80";
-        if (line.startsWith("@@")) cls = "bg-[#2563eb]/10 text-[#2563eb]";
-        else if (line.startsWith("+++") || line.startsWith("---"))
-          cls = "text-muted-foreground";
-        else if (line.startsWith("+"))
-          cls = "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-        else if (line.startsWith("-"))
-          cls = "bg-red-500/10 text-red-700 dark:text-red-300";
-        else if (/^(diff |index |new file|deleted file|rename |similarity )/.test(line))
-          cls = "text-muted-foreground/70";
-        return (
-          <div key={i} className={cn("px-3 whitespace-pre", cls)}>
-            {line || " "}
-          </div>
-        );
-      })}
+    <div className="overflow-x-auto bg-card text-xs">
+      <DiffView
+        data={{
+          hunks: [file.patch ?? ""],
+          oldFile: { fileName: oldName, fileLang: getLang(oldName) },
+          newFile: { fileName: newName, fileLang: getLang(newName) },
+        }}
+        diffViewMode={mode}
+        diffViewWrap={wrap}
+        diffViewHighlight
+        diffViewTheme={dark ? "dark" : "light"}
+        diffViewFontSize={12}
+      />
     </div>
   );
 }
 
-function FileBlock({ file }: { file: RunFileChange }) {
+function FileBlock({
+  file,
+  mode,
+  wrap,
+  dark,
+}: {
+  file: RunFileChange;
+  mode: DiffModeEnum;
+  wrap: boolean;
+  dark: boolean;
+}) {
   const { t } = useUi();
   const badge = statusBadge[file.status] ?? statusBadge.modified;
   const [open, setOpen] = useState(true);
@@ -86,13 +106,39 @@ function FileBlock({ file }: { file: RunFileChange }) {
             {t("diff.binary")}
           </p>
         ) : file.patch ? (
-          <DiffBody patch={file.patch} />
+          <DiffBody file={file} mode={mode} wrap={wrap} dark={dark} />
         ) : (
           <p className="px-3 py-3 text-xs text-muted-foreground">
             {t("diff.noPatch")}
           </p>
         ))}
     </div>
+  );
+}
+
+// 段控小按钮（统一/并排/换行 切换）
+function Seg({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-md px-2 py-1 text-xs font-medium transition-colors",
+        active
+          ? "bg-card text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -107,12 +153,14 @@ export function DiffOverlay({
   taskId: string;
   onClose: () => void;
 }) {
-  const { t } = useUi();
+  const { t, isDark } = useUi();
   const [summary, setSummary] = useState<RunChangeSummary | null>(null);
   const [files, setFiles] = useState<RunFileChange[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
+  const [mode, setMode] = useState<DiffModeEnum>(DiffModeEnum.Unified);
+  const [wrap, setWrap] = useState(true);
 
   useEffect(() => {
     let alive = true;
@@ -139,6 +187,8 @@ export function DiffOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const hasFiles = status === "ready" && files.length > 0;
+
   return (
     <div
       className="zero-overlay fixed inset-0 z-50 flex items-start justify-center bg-black/20 px-4 pt-[8vh] backdrop-blur-sm"
@@ -146,7 +196,7 @@ export function DiffOverlay({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="zero-dialog flex max-h-[84vh] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-xl"
+        className="zero-dialog flex max-h-[84vh] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-xl"
       >
         <div className="flex items-center gap-2.5 border-b border-border px-5 py-3">
           <FileDiff className="size-4 text-muted-foreground" />
@@ -168,10 +218,34 @@ export function DiffOverlay({
               </span>
             </span>
           )}
+          {/* 统一/并排 + 换行 切换 */}
+          {hasFiles && (
+            <div className="ml-auto flex items-center gap-1 rounded-lg bg-muted/60 p-0.5">
+              <Seg
+                active={mode === DiffModeEnum.Unified}
+                onClick={() => setMode(DiffModeEnum.Unified)}
+              >
+                {t("diff.unified")}
+              </Seg>
+              <Seg
+                active={mode === DiffModeEnum.Split}
+                onClick={() => setMode(DiffModeEnum.Split)}
+              >
+                {t("diff.split")}
+              </Seg>
+              <span className="mx-0.5 h-4 w-px bg-border" />
+              <Seg active={wrap} onClick={() => setWrap((v) => !v)}>
+                {t("diff.wrap")}
+              </Seg>
+            </div>
+          )}
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+            className={cn(
+              "flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
+              hasFiles ? "" : "ml-auto",
+            )}
           >
             <X className="size-4" />
           </button>
@@ -188,7 +262,13 @@ export function DiffOverlay({
           ) : (
             <div className="flex flex-col gap-3">
               {files.map((f) => (
-                <FileBlock key={f.id} file={f} />
+                <FileBlock
+                  key={f.id}
+                  file={f}
+                  mode={mode}
+                  wrap={wrap}
+                  dark={isDark}
+                />
               ))}
             </div>
           )}
