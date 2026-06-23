@@ -296,6 +296,51 @@ const SKIP_DIRS = [
 ];
 const SKIP_SET = new Set(SKIP_DIRS);
 
+// 敏感文件名单：这些文件即便变动也不进 diff —— 防 .env / .claude.json / 密钥凭据的明文
+// patch 落库 + 前端渲染。git 引擎下 .gitignore 挡不住「已跟踪」的密钥；影子 / 纯 JS 引擎
+// 更没有 .gitignore 兜底。故在「捕获输出层」统一过滤，覆盖三引擎。模板 / 示例放行（常被
+// 提交、不含真值）。按需扩充即可。
+function isSensitivePath(p: string): boolean {
+  const name = (p.split("/").pop() ?? "").toLowerCase();
+  if (!name) return false;
+  if (/\.(example|sample|template|dist)$/.test(name)) return false; // 模板放行
+  if (name === ".env" || name.startsWith(".env.")) return true;
+  if (name === ".claude.json") return true;
+  if (name === ".netrc" || name === ".git-credentials") return true;
+  if (name === ".npmrc" || name === ".pypirc" || name === ".dockercfg")
+    return true;
+  if (/\.(pem|key|p12|pfx|keystore|jks)$/.test(name)) return true;
+  if (/^id_(rsa|dsa|ecdsa|ed25519)$/.test(name)) return true;
+  if (name.includes("credentials")) return true;
+  return false;
+}
+// 影子引擎排除文件用：连密钥都不拍进影子树（与 isSensitivePath 对齐，末尾负向放行模板）
+const SENSITIVE_GLOBS = [
+  ".env",
+  ".env.*",
+  ".claude.json",
+  ".netrc",
+  ".git-credentials",
+  ".npmrc",
+  ".pypirc",
+  ".dockercfg",
+  "*.pem",
+  "*.key",
+  "*.p12",
+  "*.pfx",
+  "*.keystore",
+  "*.jks",
+  "id_rsa",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519",
+  "*credentials*",
+  "!*.example",
+  "!*.sample",
+  "!*.template",
+  "!*.dist",
+];
+
 type FileChange = {
   path: string;
   status: "added" | "modified" | "deleted" | "renamed";
@@ -354,7 +399,10 @@ function shadowExcludesFile(): string {
   ensureDir(SNAP_DIR);
   const f = join(SNAP_DIR, "shadow-excludes");
   try {
-    writeFileSync(f, SKIP_DIRS.map((d) => `${d}/`).join("\n") + "\n");
+    writeFileSync(
+      f,
+      [...SKIP_DIRS.map((d) => `${d}/`), ...SENSITIVE_GLOBS].join("\n") + "\n",
+    );
   } catch {
     /* ignore */
   }
@@ -500,6 +548,13 @@ async function gitDiffTrees(
       });
     }
   }
+  // 敏感文件不进 diff：在取 patch 前就剔除，连内容都不读。覆盖 git 引擎下「已跟踪」的密钥
+  // （.gitignore 挡不住已跟踪文件）；影子引擎已在 excludes 拦过，这里是统一保险。
+  for (let i = files.length - 1; i >= 0; i--) {
+    const f = files[i];
+    if (isSensitivePath(f.path) || (f.oldPath && isSensitivePath(f.oldPath)))
+      files.splice(i, 1);
+  }
   // 逐文件 patch（二进制跳过；改名需同时给 old/new 端点 git 才认得出改名）
   for (const f of files) {
     if (f.isBinary) continue;
@@ -542,7 +597,7 @@ function jsWalk(root: string, rel: string, out: string[]) {
       if (SKIP_SET.has(ent.name)) continue;
       jsWalk(root, r, out);
     } else if (ent.isFile()) {
-      out.push(r);
+      if (!isSensitivePath(r)) out.push(r); // 密钥/凭据不读进快照
     }
   }
 }

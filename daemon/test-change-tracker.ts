@@ -154,10 +154,75 @@ async function s4() {
   }
 }
 
+// ── S5：敏感文件 denylist —— 密钥/凭据不进 diff（影子 + 纯 JS + git 已跟踪）──
+async function s5() {
+  console.log("\n[S5] 敏感文件 denylist：.env/.claude.json/密钥不进 diff，模板放行");
+
+  // (a) 非 git 目录 → 影子引擎
+  {
+    const d = tmp();
+    const base = await captureBaseline(d, nextId());
+    writeFileSync(join(d, ".env"), "SECRET_KEY=topsecret\n");
+    writeFileSync(join(d, ".claude.json"), '{"token":"abc"}\n');
+    writeFileSync(join(d, "config.pem"), "-----BEGIN KEY-----\n");
+    writeFileSync(join(d, "id_rsa"), "PRIVATE\n");
+    writeFileSync(join(d, ".npmrc"), "//r/:_authToken=xyz\n");
+    writeFileSync(join(d, "aws-credentials.json"), '{"k":"v"}\n');
+    writeFileSync(join(d, ".env.example"), "SECRET_KEY=\n"); // 模板放行
+    writeFileSync(join(d, "normal.txt"), "hello\n");
+    const m = byPath(await captureChanges(d, base!));
+    ok(base?.engine === "git" && base.gitDir != null, "影子：引擎=影子库");
+    ok(!m.has(".env"), "影子：.env 被挡");
+    ok(!m.has(".claude.json"), "影子：.claude.json 被挡");
+    ok(!m.has("config.pem"), "影子：*.pem 被挡");
+    ok(!m.has("id_rsa"), "影子：id_rsa 被挡");
+    ok(!m.has(".npmrc"), "影子：.npmrc 被挡");
+    ok(!m.has("aws-credentials.json"), "影子：*credentials* 被挡");
+    ok(m.has("normal.txt"), "影子：普通文件正常出");
+    ok(m.has(".env.example"), "影子：.env.example 模板放行");
+    rmSync(d, { recursive: true, force: true });
+  }
+
+  // (b) 纯 JS 引擎（强制）
+  process.env.ZERO_DIFF_ENGINE = "js";
+  try {
+    const d = tmp();
+    const base = await captureBaseline(d, nextId());
+    writeFileSync(join(d, ".env"), "SECRET=1\n");
+    writeFileSync(join(d, "private.key"), "KEY\n");
+    writeFileSync(join(d, "normal.txt"), "hi\n");
+    const m = byPath(await captureChanges(d, base!));
+    ok(base?.engine === "js", "JS：引擎=js");
+    ok(!m.has(".env") && !m.has("private.key"), "JS：密钥不进 diff");
+    ok(m.has("normal.txt"), "JS：普通文件正常出");
+    rmSync(d, { recursive: true, force: true });
+  } finally {
+    delete process.env.ZERO_DIFF_ENGINE;
+  }
+
+  // (c) git 仓库里「已跟踪」的密钥（.gitignore 挡不住）也不进 diff
+  {
+    const d = tmp();
+    gitInit(d);
+    writeFileSync(join(d, ".env"), "SECRET=old\n"); // 已提交 = 已跟踪
+    writeFileSync(join(d, "app.txt"), "v1\n");
+    commit(d);
+    const base = await captureBaseline(d, nextId());
+    writeFileSync(join(d, ".env"), "SECRET=new\n"); // 改已跟踪密钥
+    writeFileSync(join(d, "app.txt"), "v1\nv2\n");
+    const m = byPath(await captureChanges(d, base!));
+    ok(base?.engine === "git" && base.gitDir == null, "git：引擎=temp-index");
+    ok(!m.has(".env"), "git：已跟踪的 .env 改动也不进 diff");
+    ok(m.get("app.txt")?.status === "modified", "git：普通文件正常出");
+    rmSync(d, { recursive: true, force: true });
+  }
+}
+
 console.log("=== 变更可视化 ChangeTracker e2e ===");
 await s1();
 await s2();
 await s3();
 await s4();
+await s5();
 console.log(`\n=== ${fails === 0 ? "全部通过 ✅" : `${fails} 处失败 ❌`} ===`);
 process.exit(fails === 0 ? 0 : 1);
