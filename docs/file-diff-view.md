@@ -36,6 +36,23 @@ e2e（`daemon/test-change-tracker.ts`）覆盖 git/脏树/影子库/纯 JS 共 2
 成功 / 失败**都**捕获（agent 常改到一半才失败）。server 抽 `persistChanges()` 共用，`/complete` 与
 `/fail` 都落 `task_change`/`task_file_change` + `diff_ready` 事件。**取消(cancel)** 暂不捕获（server 已移交终态）。
 
+### 敏感文件 denylist（v2.1，2026-06-23）
+
+捕获层加了**文件级敏感名单 `isSensitivePath()`**（`daemon/src/index.ts`）：`.env*`（模板
+`.env.example`/`.sample`/`.template`/`.dist` 放行）、`.claude.json`、`*.pem`/`*.key`/`*.p12`/`*.pfx`/
+`*.keystore`/`*.jks`、`id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`、`.npmrc`/`.pypirc`/`.dockercfg`/
+`.netrc`/`.git-credentials`、`*credentials*` —— **这些文件即便变动也不进 diff**，杜绝密钥/凭据明文
+落 `task_file_change.patch` + 前端渲染。
+
+- **为何必需**：影子 / 纯 JS 引擎**没有 `.gitignore` 兜底**（git 引擎那条路 .gitignore 自动挡 `.env`，
+  这两条没有）；且 git 引擎下 **`.gitignore` 挡不住「已跟踪」的密钥**。实测拿 `$HOME` 当 workDir 时
+  `.claude.json` 漏进了 diff（`.claude/` 目录排除匹配不到 `.claude.json` 文件）——这就是把 denylist
+  补到**捕获层**的由来（原 §三只给「文件浏览」设计了 denylist）。
+- **三处加固**：① 影子引擎 excludes 追加 `SENSITIVE_GLOBS`（连密钥都不拍进影子树）；② 纯 JS 引擎
+  `jsWalk` 跳过敏感文件（不读进快照）；③ git 引擎在取 patch 前从结果剔除（覆盖已跟踪密钥，连内容都不读）。
+- **e2e**：`test-change-tracker.ts` S5 —— 影子 / 纯 JS / git 已跟踪 三引擎各验密钥被挡、普通文件正常出、
+  `.env.example` 模板放行（共 15 断言，全过）。
+
 ### 渲染（v2）
 
 `DiffOverlay` 用 **`@git-diff-view/react`**（GitHub 风格 + 内置 lowlight 语法高亮 + 大文件虚拟滚动 +

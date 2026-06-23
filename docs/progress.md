@@ -2,6 +2,22 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-23 · 变更可视化 v2.1：捕获层敏感文件 denylist（分支 feat/diff-secret-denylist）🔒
+
+**缘起（实测暴露）**：v2 上线后拿 `$HOME` 当 workDir 自测，diff 卡片里冒出 `.claude.json`（`M +448 −448`）。
+根因：影子引擎默认排除是**目录模式**（`.claude/`），匹配不到 `.claude.json` **文件**；更要紧的是——影子 /
+纯 JS 引擎**没有 `.gitignore` 兜底**，意味着非 git 目录里任何变动的 `.env`/密钥都会被**明文 patch 落库 + 前端渲染**。
+
+- **加固（`daemon/src/index.ts`，纯捕获层，server/前端/表 0 改）**：新增 `isSensitivePath()` 文件级名单
+  （`.env*` 模板放行 / `.claude.json` / `*.pem|key|p12|pfx|keystore|jks` / `id_rsa|dsa|ecdsa|ed25519` /
+  `.npmrc|.pypirc|.dockercfg|.netrc|.git-credentials` / `*credentials*`），三引擎统一拦：① 影子 excludes
+  追加 `SENSITIVE_GLOBS`（不拍进影子树）；② 纯 JS `jsWalk` 跳过（不读进快照）；③ git 引擎取 patch 前剔除
+  （**覆盖 .gitignore 挡不住的「已跟踪」密钥**，连内容都不读）。
+- **e2e**：`test-change-tracker.ts` 加 **S5**（影子 / 纯 JS / git-已跟踪 三引擎 × 密钥被挡 + 普通文件正常出 +
+  `.env.example` 模板放行）。全套 **S1–S5 共 40 断言全过**；daemon typecheck + `bun build --compile` 过。
+- **隔离**：独立 worktree `zero-feat-diff-denylist` + 分支 `feat/diff-secret-denylist`（基于已推送的 main `b5c759f`）。
+  动手前先把 main 推上云端（`577ad01..b5c759f`，origin 已对齐）。
+
 ## 2026-06-23 · 变更可视化 v2：快照式追踪（学 codex，不依赖 git 仓库）+ diff 渲染升级（分支 feat/change-tracker）🎉
 
 **缘起**：原变更可视化把「工作目录必须已是 git 仓库」当前提（基线 = `git rev-parse HEAD`），导致
