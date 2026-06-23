@@ -92,6 +92,7 @@ export function IssueDetailView() {
   const [posting, setPosting] = useState(false);
   const [pending, setPending] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     if (!wsId || !id) return;
@@ -200,6 +201,23 @@ export function IssueDetailView() {
     } finally {
       setUploading(false);
     }
+  }
+
+  // 直接粘贴图片/文件：从剪贴板取出文件，走同一条上传链路
+  function onPasteFiles(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      e.preventDefault(); // 有文件时拦截，避免把文件名当文本插入
+      void onPickFiles(files);
+    }
+  }
+
+  // 拖拽文件到输入框
+  function onDropFiles(e: React.DragEvent<HTMLTextAreaElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) void onPickFiles(files);
   }
 
   if (status === "loading") {
@@ -332,8 +350,18 @@ export function IssueDetailView() {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter")
                     void postComment();
                 }}
+                onPaste={onPasteFiles}
+                onDrop={onDropFiles}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (!dragOver) setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
                 placeholder={t("detail.commentPh")}
-                className="min-h-[72px] w-full resize-none rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-active-fg"
+                className={cn(
+                  "min-h-[72px] w-full resize-none rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-active-fg",
+                  dragOver && "border-active-fg ring-2 ring-active-fg/30",
+                )}
               />
               <div className="mt-2 flex items-center justify-between">
                 <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
