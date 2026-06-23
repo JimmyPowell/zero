@@ -120,7 +120,7 @@ const TOOLS = [
   {
     name: "zero_write_knowledge",
     description:
-      "Save a durable note to the TEAM KNOWLEDGE BASE (a convention, decision, gotcha or runbook worth remembering across issues). Use when the user asks to remember/沉淀 something, or when you discover a reusable rule. Defaults to this issue's project.",
+      "Save a durable note to the TEAM KNOWLEDGE BASE (a convention, decision, gotcha or runbook worth remembering across issues). Use when the user asks to remember/沉淀 something, or when you discover a reusable rule. To grow an existing doc use mode:'append' (no need to resend the whole file); for team-wide rules use scope:'workspace'. Defaults to this issue's project, overwrite mode.",
     inputSchema: {
       type: "object",
       properties: {
@@ -131,6 +131,18 @@ const TOOLS = [
         content: {
           type: "string",
           description: "Markdown content; a few sentences, start with a # title.",
+        },
+        mode: {
+          type: "string",
+          enum: ["overwrite", "append"],
+          description:
+            "overwrite (default) replaces the whole doc; append adds your content to the end of an existing doc — safe for accumulating notes without re-sending the whole file.",
+        },
+        scope: {
+          type: "string",
+          enum: ["auto", "workspace", "project"],
+          description:
+            "Which knowledge base to write to. auto (default) = this issue's project (or workspace if it has none); workspace = team-wide (injected for all projects); project = this issue's project.",
         },
         pinned: {
           type: "boolean",
@@ -193,8 +205,10 @@ async function callTool(name: string, args: Record<string, any>): Promise<string
       path: args.path,
       content: args.content,
       pinned: args.pinned,
+      mode: args.mode,
+      scope: args.scope,
     });
-    return `saved: ${d.path}`;
+    return `saved: ${d.path} (scope=${d.scope}, mode=${d.mode})`;
   }
   throw new Error(`unknown tool: ${name}`);
 }

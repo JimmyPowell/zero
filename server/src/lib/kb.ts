@@ -81,6 +81,10 @@ export interface WriteDocInput {
   projectId?: string | null;
   pinned?: boolean;
   author?: string | null;
+  // overwrite（默认）= 整篇替换；append = 在已有文档末尾追加（安全积累，无需回传整篇）
+  mode?: "overwrite" | "append";
+  // 写入来源描述，进 commit message / --author，便于 git 历史溯源（如 "local-daemon via ZERO-8"）
+  source?: string | null;
 }
 
 // 写入 / 更新文档：落盘 + commit + upsert kb_doc。返回 kb_doc id。
@@ -89,14 +93,29 @@ export async function writeDoc(input: WriteDocInput): Promise<string> {
   const rel = safeRel(dir, input.path);
   const abs = join(dir, rel);
   mkdirSync(resolve(abs, ".."), { recursive: true });
-  await Bun.write(abs, input.content);
+
+  // append：读回原文，末尾接新内容（空段分隔）；原文为空/不存在则等同 overwrite
+  const mode = input.mode ?? "overwrite";
+  let content = input.content;
+  if (mode === "append") {
+    const f = Bun.file(abs);
+    const cur = (await f.exists()) ? await f.text() : "";
+    if (cur.trim() !== "")
+      content = cur.replace(/\s+$/, "") + "\n\n" + input.content.replace(/^\s+/, "");
+  }
+  await Bun.write(abs, content);
   await git(["add", "--", rel], dir);
   // 内容没变时 commit 会失败（nothing to commit）→ 忽略，索引仍更新
-  await git(["commit", "-q", "-m", `kb: 更新 ${rel}`], dir);
+  const verb = mode === "append" ? "追加" : "更新";
+  const src = input.source ? ` (${input.source})` : "";
+  const commitArgs = ["commit", "-q", "-m", `kb: ${verb} ${rel}${src}`];
+  if (input.source) commitArgs.push(`--author=${input.source} <agent@zero.local>`);
+  await git(commitArgs, dir);
 
   const scope = input.projectId ? "project" : "workspace";
-  const title = titleOf(input.content, rel);
-  const hash = sha(input.content);
+  // 标题 / 哈希取最终落盘内容（append 后含原文，标题仍沿用原 H1）
+  const title = titleOf(content, rel);
+  const hash = sha(content);
   const [existing] = await db
     .select({ id: schema.kbDoc.id })
     .from(schema.kbDoc)

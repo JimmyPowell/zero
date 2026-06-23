@@ -346,6 +346,10 @@ export const daemonRoutes = new Hono<DaemonEnv>()
         path: z.string().trim().min(1).max(512),
         content: z.string().max(2_000_000),
         pinned: z.boolean().optional(),
+        // 整篇覆盖（默认）/ 末尾追加
+        mode: z.enum(["overwrite", "append"]).optional(),
+        // 写到哪个库：auto（默认，归本 issue 项目，无项目则工作空间级）/ workspace 团队级 / project 项目级
+        scope: z.enum(["auto", "workspace", "project"]).optional(),
       }),
     ),
     async (c) => {
@@ -353,6 +357,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       const id = c.req.param("id");
       const [iss] = await db
         .select({
+          number: schema.issue.number,
           workspaceId: schema.issue.workspaceId,
           projectId: schema.issue.projectId,
         })
@@ -362,15 +367,25 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       if (!iss || iss.workspaceId !== rt.workspaceId)
         return c.json({ error: "issue 不存在或越权" }, 404);
       const body = c.req.valid("json");
+      // scope 决定落哪个库：workspace → 工作空间级（projectId=null）；其余跟随本 issue 项目
+      const scope = body.scope ?? "auto";
+      const projectId = scope === "workspace" ? null : iss.projectId ?? null;
       try {
         const docId = await writeDoc({
           workspaceId: iss.workspaceId,
           path: body.path,
           content: body.content,
-          projectId: iss.projectId ?? null,
+          projectId,
           pinned: body.pinned,
+          mode: body.mode,
+          source: `${rt.name} via ZERO-${iss.number}`,
         });
-        return c.json({ id: docId, path: body.path });
+        return c.json({
+          id: docId,
+          path: body.path,
+          scope: projectId ? "project" : "workspace",
+          mode: body.mode ?? "overwrite",
+        });
       } catch (e) {
         return c.json({ error: (e as Error).message }, 400);
       }

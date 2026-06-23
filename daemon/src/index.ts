@@ -688,7 +688,7 @@ export function buildPrompt(
     for (const cm of shown) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
   }
   L.push(
-    "\nOn-demand tools (MCP): `zero_older_comments` (earlier comments), `zero_prior_runs` (past runs), `zero_search_knowledge` (search the team knowledge base), `zero_write_knowledge` (save a durable note/convention/gotcha to the knowledge base — use when asked to remember/沉淀 something). Prefer the context already given; call these only when needed.",
+    "\nOn-demand tools (MCP): `zero_older_comments` (earlier comments), `zero_prior_runs` (past runs), `zero_search_knowledge` (search the team knowledge base), `zero_write_knowledge` (save a durable note/convention/gotcha to the knowledge base — use when asked to remember/沉淀 something; use mode:'append' to grow an existing doc, scope:'workspace' for team-wide rules). Prefer the context already given; call these only when needed.",
   );
   L.push(
     "\nThis run is NON-INTERACTIVE and single-shot: when you end your turn the run ENDS and you are NOT automatically resumed. Do not promise to \"report back in a minute\" or sleep/busy-wait. If you must wait for something and then continue, schedule a callback BEFORE ending: `zero_wake_me(after_sec, note)` to be re-invoked after a delay, or `zero_watch_pid(pid, note)` to be re-invoked when a long background job finishes. You resume with full session memory.",
