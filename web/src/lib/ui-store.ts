@@ -332,6 +332,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "settings.moreSoon": "更多渠道（飞书 / 移动端）即将上线",
     // 技能库
     "menu.skills": "技能库",
+    "menu.automation": "自动化",
+    "automation.title": "自动化",
+    "automation.empty": "自动化即将上线",
+    "automation.emptyHint": "在这里编排定时任务与自动触发的工作流，让智能体按计划自动跑起来。",
     "skills.title": "技能库",
     "skills.subtitle":
       "技能是可移植的能力包（SKILL.md），在库里统一维护，挂到智能体上按需加载——比写死系统指令更好复用。",
@@ -770,6 +774,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "settings.moreSoon": "More channels (Feishu / mobile) coming soon",
     // Skill library
     "menu.skills": "Skills",
+    "menu.automation": "Automation",
+    "automation.title": "Automation",
+    "automation.empty": "Automation is coming soon",
+    "automation.emptyHint": "Orchestrate scheduled jobs and auto-triggered workflows so your agents run on their own.",
     "skills.title": "Skill library",
     "skills.subtitle":
       "Skills are portable capability packs (SKILL.md), maintained once here and loaded on demand when attached to an agent — more reusable than hard-coded instructions.",

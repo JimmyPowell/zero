@@ -11,6 +11,7 @@ import {
   Search,
   SquarePen,
   Settings,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 
@@ -49,6 +50,7 @@ const platformNav: MenuItem[] = [
   { key: "agents", labelKey: "menu.agents", icon: Bot },
   { key: "runtime", labelKey: "menu.runtime", icon: Server },
   { key: "skills", labelKey: "menu.skills", icon: Library },
+  { key: "automation", labelKey: "menu.automation", icon: Workflow },
 ];
 
 // 侧边栏动作项（搜索 / 新建需求）：图标 + 文案 + 右侧快捷键徽标
