@@ -7,14 +7,30 @@ interface IssuesState {
   status: "idle" | "loading" | "ready" | "error";
   issues: Issue[];
   error: string | null;
+  // 项目筛选：null=全部；NO_PROJECT=未分类；否则为某个 project.id
+  projectFilter: string | null;
 }
+
+// 「未分类」哨兵：区分「不筛选(null)」与「只看没归属项目的需求」
+export const NO_PROJECT = "__none__";
 
 const state: IssuesState = {
   workspaceId: null,
   status: "idle",
   issues: [],
   error: null,
+  projectFilter: null,
 };
+
+// 按当前筛选条件过滤需求列表（列表视图与看板视图共用同一口径）
+export function filterByProject(
+  issues: Issue[],
+  projectFilter: string | null,
+): Issue[] {
+  if (projectFilter == null) return issues;
+  if (projectFilter === NO_PROJECT) return issues.filter((i) => i.project == null);
+  return issues.filter((i) => i.project?.id === projectFilter);
+}
 
 const listeners = new Set<() => void>();
 let snapshot: IssuesState = { ...state };
@@ -36,7 +52,11 @@ async function load(workspaceId: string, opts: { force?: boolean } = {}) {
   const switching = state.workspaceId !== workspaceId;
   state.workspaceId = workspaceId;
   state.status = "loading";
-  if (switching) state.issues = [];
+  // 切换工作空间时清掉筛选：旧项目 id 在新空间里不存在
+  if (switching) {
+    state.issues = [];
+    state.projectFilter = null;
+  }
   state.error = null;
   emit();
 
@@ -70,6 +90,13 @@ function replace(issue: Issue) {
   emit();
 }
 
+// 切换项目筛选（列表/看板共用），值为 null / NO_PROJECT / project.id
+function setProjectFilter(projectId: string | null) {
+  if (state.projectFilter === projectId) return;
+  state.projectFilter = projectId;
+  emit();
+}
+
 export const issuesActions = {
   load,
   refresh: () => {
@@ -77,6 +104,7 @@ export const issuesActions = {
   },
   prepend,
   replace,
+  setProjectFilter,
 };
 
 export function useIssues() {
