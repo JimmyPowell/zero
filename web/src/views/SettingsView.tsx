@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Mail,
   MessageSquare,
   Send,
   Bell,
+  Server,
   Trash2,
   Copy,
   Check,
@@ -21,6 +22,7 @@ import {
   ApiError,
   type ChannelBinding,
   type UpsertChannelPayload,
+  type UpsertEmailProviderPayload,
 } from "@/lib/api-client";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -341,11 +343,257 @@ function LinkCodeCard({
   );
 }
 
+// 带标签的输入项
+function Labeled({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+// SMTP 服务器卡片（A 层：发信凭据，仅 owner/admin 可见可改）。密码 write-only，永不回显。
+function SmtpServerCard({ wsId }: { wsId: string | null }) {
+  const { t } = useUi();
+  const [cryptoReady, setCryptoReady] = useState(true);
+  const [hasPassword, setHasPassword] = useState(false);
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("465");
+  const [secure, setSecure] = useState(true);
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [from, setFrom] = useState("");
+  const [fromName, setFromName] = useState("Zero");
+  const [enabled, setEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!wsId) return;
+    api
+      .getEmailProvider(wsId)
+      .then((r) => {
+        setCryptoReady(r.cryptoReady);
+        if (r.config) {
+          setHost(r.config.host);
+          setPort(String(r.config.port));
+          setSecure(r.config.secure);
+          setUser(r.config.user);
+          setFrom(r.config.from);
+          setFromName(r.config.fromName || "Zero");
+          setEnabled(r.config.enabled);
+          setHasPassword(r.config.hasPassword);
+        }
+      })
+      .catch(() => {});
+  }, [wsId]);
+
+  async function save() {
+    if (!wsId || saving) return;
+    if (!host.trim() || !from.trim()) {
+      setMsg({ ok: false, text: t("settings.smtpNeedHostFrom") });
+      return;
+    }
+    setSaving(true);
+    setMsg(null);
+    try {
+      const payload: UpsertEmailProviderPayload = {
+        host: host.trim(),
+        port: Number(port) || 465,
+        secure,
+        user: user.trim(),
+        from: from.trim(),
+        fromName: fromName.trim() || "Zero",
+        enabled,
+      };
+      if (pass) payload.pass = pass; // 留空 = 不改
+      const r = await api.upsertEmailProvider(wsId, payload);
+      if (r.config) setHasPassword(r.config.hasPassword);
+      setPass("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      setMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : t("settings.netErr"),
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function test() {
+    if (!wsId || testing) return;
+    setTesting(true);
+    setMsg(null);
+    try {
+      const r = await api.testEmailProvider(wsId);
+      setMsg({
+        ok: true,
+        text: t("settings.smtpTestOk").replace("{addr}", r.sentTo ?? ""),
+      });
+    } catch (err) {
+      setMsg({
+        ok: false,
+        text: err instanceof ApiError ? err.message : t("settings.netErr"),
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex size-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#2563eb]/10 text-[#2563eb]">
+          <Server className="size-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-foreground">
+              {t("settings.smtpTitle")}
+              <span
+                className={cn(
+                  "ml-2 rounded-full px-2 py-0.5 text-[11px] font-normal",
+                  enabled && host
+                    ? "bg-emerald-500/10 text-emerald-600"
+                    : "bg-muted text-muted-foreground",
+                )}
+              >
+                {enabled && host ? t("settings.on") : t("settings.off")}
+              </span>
+            </p>
+            <Switch checked={enabled} onChange={setEnabled} />
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t("settings.smtpDesc")}
+          </p>
+
+          {!cryptoReady && (
+            <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-600">
+              {t("settings.smtpNoCrypto")}
+            </p>
+          )}
+
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <Labeled label={t("settings.smtpHost")}>
+                <Input
+                  placeholder="smtp.qq.com"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                />
+              </Labeled>
+            </div>
+            <Labeled label={t("settings.smtpPort")}>
+              <Input
+                inputMode="numeric"
+                placeholder="465"
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+              />
+            </Labeled>
+            <div className="flex items-end justify-between gap-2 pb-1">
+              <span className="text-xs text-muted-foreground">
+                {t("settings.smtpSecure")}
+              </span>
+              <Switch checked={secure} onChange={setSecure} />
+            </div>
+            <Labeled label={t("settings.smtpUser")}>
+              <Input
+                value={user}
+                onChange={(e) => setUser(e.target.value)}
+              />
+            </Labeled>
+            <Labeled label={t("settings.smtpPass")}>
+              <Input
+                type="password"
+                placeholder={
+                  hasPassword
+                    ? t("settings.smtpPassSet")
+                    : t("settings.smtpPassPh")
+                }
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+              />
+            </Labeled>
+            <Labeled label={t("settings.smtpFrom")}>
+              <Input
+                placeholder="noreply@yourdomain.com"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </Labeled>
+            <Labeled label={t("settings.smtpFromName")}>
+              <Input
+                placeholder="Zero"
+                value={fromName}
+                onChange={(e) => setFromName(e.target.value)}
+              />
+            </Labeled>
+          </div>
+
+          {msg && (
+            <p
+              className={cn(
+                "mt-2 text-xs",
+                msg.ok ? "text-emerald-600" : "text-destructive",
+              )}
+            >
+              {msg.text}
+            </p>
+          )}
+
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <p className="truncate text-xs text-muted-foreground">
+              {t("settings.smtpTestHint")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={test}
+                disabled={testing || saving}
+              >
+                {testing ? t("settings.smtpTesting") : t("settings.smtpTest")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={save}
+                disabled={saving}
+                className="bg-[#2563eb] text-white hover:bg-[#2563eb]/90"
+              >
+                {saving
+                  ? t("settings.saving")
+                  : saved
+                    ? t("settings.saved")
+                    : t("settings.save")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView() {
   const { t } = useUi();
   const { currentWorkspace, user } = useAuth();
   const wsId = currentWorkspace?.id ?? null;
   const fallbackEmail = user?.email ?? "";
+  // SMTP 发信凭据是工作空间级发信身份，仅 owner/admin 可配置
+  const isAdmin =
+    currentWorkspace?.role === "owner" || currentWorkspace?.role === "admin";
 
   const [channels, setChannels] = useState<ChannelBinding[]>([]);
   const [status, setStatus] = useState<"loading" | "ready">("loading");
@@ -402,6 +650,7 @@ export function SettingsView() {
           </div>
         ) : (
           <div className="mt-4 flex flex-col gap-3">
+            {isAdmin && <SmtpServerCard wsId={wsId} />}
             <ChannelCard
               wsId={wsId}
               icon={Mail}

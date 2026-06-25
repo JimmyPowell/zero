@@ -14,6 +14,7 @@ import { skillRoutes } from "@/routes/skills";
 import { runtimeRoutes } from "@/routes/runtimes";
 import { daemonRoutes } from "@/routes/daemon";
 import { channelRoutes } from "@/routes/channels";
+import { channelConfigRoutes } from "@/routes/channel-config";
 import {
   attachmentRoutes,
   attachmentDownloadRoutes,
@@ -47,6 +48,7 @@ app.route("/workspaces/:wsId/agents", agentRoutes);
 app.route("/workspaces/:wsId/skills", skillRoutes);
 app.route("/workspaces/:wsId/runtimes", runtimeRoutes);
 app.route("/workspaces/:wsId/channels", channelRoutes);
+app.route("/workspaces/:wsId/channel-config", channelConfigRoutes);
 app.route("/workspaces/:wsId/attachments", attachmentRoutes);
 app.route("/daemon", daemonRoutes);
 app.route("/attachments", attachmentDownloadRoutes);

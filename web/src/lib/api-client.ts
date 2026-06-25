@@ -535,6 +535,31 @@ export interface UpsertChannelPayload {
   enabled?: boolean;
 }
 
+// ---- 渠道服务端配置（A 层：SMTP 发信凭据，仅 owner/admin 可编辑）----
+// 后端永不回传密码明文，只给 hasPassword 表示是否已设
+export interface EmailProviderConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  from: string;
+  fromName: string;
+  enabled: boolean;
+  hasPassword: boolean;
+  updatedAt: string | null;
+}
+
+export interface UpsertEmailProviderPayload {
+  host: string;
+  port?: number;
+  secure?: boolean;
+  user?: string;
+  pass?: string; // 留空 = 不修改原密码
+  from: string;
+  fromName?: string;
+  enabled?: boolean;
+}
+
 // ---- 项目（Project）----
 export type ProjectStatus =
   | "planned"
@@ -888,6 +913,27 @@ export const api = {
   createTelegramLinkCode: (workspaceId: string) =>
     request<{ code: string }>(
       `/workspaces/${workspaceId}/channels/telegram/link-code`,
+      { method: "POST", body: {} },
+    ),
+
+  // ---- 渠道服务端配置（SMTP 发信凭据，仅 owner/admin）----
+  getEmailProvider: (workspaceId: string) =>
+    request<{ config: EmailProviderConfig | null; cryptoReady: boolean }>(
+      `/workspaces/${workspaceId}/channel-config/email`,
+    ),
+
+  upsertEmailProvider: (
+    workspaceId: string,
+    payload: UpsertEmailProviderPayload,
+  ) =>
+    request<{ config: EmailProviderConfig | null }>(
+      `/workspaces/${workspaceId}/channel-config/email`,
+      { method: "PUT", body: payload },
+    ),
+
+  testEmailProvider: (workspaceId: string) =>
+    request<{ ok?: boolean; sentTo?: string; error?: string }>(
+      `/workspaces/${workspaceId}/channel-config/email/test`,
       { method: "POST", body: {} },
     ),
 

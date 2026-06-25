@@ -719,6 +719,29 @@ export const notificationOutbox = mysqlTable(
   ],
 );
 
+// 渠道「服务端配置」（A 层）：某工作空间用哪套发信凭据。与 channel_binding（B 层收件人）对称。
+// email → SMTP host/port/secure/user/from/fromName 存 config(JSON)，password 单独加密存 secret_enc。
+// 仅 owner/admin 可改；DB 命中优先于 env(config.smtp)，env 作兜底。
+export const channelProvider = mysqlTable(
+  "channel_provider",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    kind: mysqlEnum("kind", ["email", "wecom", "telegram", "feishu"]).notNull(),
+    // 非敏感字段：email = {host,port,secure,user,from,fromName}
+    config: json("config").notNull(),
+    // 敏感字段：AES-256-GCM 密文 base64(iv|tag|cipher)，绝不进 config、绝不回前端
+    secretEnc: text("secret_enc"),
+    enabled: int("enabled").notNull().default(1), // 1=启用 0=停用
+    updatedBy: char("updated_by", { length: 36 }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [unique("uniq_provider_ws_kind").on(t.workspaceId, t.kind)],
+);
+
 // 知识库文档索引：真相是 git 仓库里的 markdown，这里只存索引/元数据，供列表 + 检索(M3 全文/向量)。
 export const kbDoc = mysqlTable(
   "kb_doc",
@@ -770,3 +793,4 @@ export type TaskChange = typeof taskChange.$inferSelect;
 export type TaskFileChange = typeof taskFileChange.$inferSelect;
 export type ChannelBinding = typeof channelBinding.$inferSelect;
 export type NotificationOutbox = typeof notificationOutbox.$inferSelect;
+export type ChannelProvider = typeof channelProvider.$inferSelect;

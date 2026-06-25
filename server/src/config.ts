@@ -9,6 +9,9 @@ export const config = {
   appUrl: process.env.APP_URL ?? "http://localhost:5173",
   // 知识库 git 仓库根目录（每工作空间一个子目录）。空 → <server>/data/kb（已 gitignore）。
   kbDir: process.env.KB_DIR ?? "",
+  // 敏感凭据加密主密钥（AES-256-GCM）。用于把 SMTP 密码等加密后存 DB。
+  // 任意长度字符串，运行时 sha256 派生成 32 字节。未配置则无法在设置页存密码（强制走 env）。
+  configEncKey: process.env.CONFIG_ENC_KEY ?? "",
   // 邮件（SMTP）。未配置 SMTP_HOST 时邮件 adapter 进 dev 回退（打印不发信）。
   smtp: {
     host: process.env.SMTP_HOST ?? "",

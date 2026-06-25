@@ -27,7 +27,7 @@ async function deliver(row: OutboxRow): Promise<void> {
     const address = (binding.config as { address?: string })?.address;
     if (!address) throw new Error("email 绑定缺少 address");
     const html = (row.payload as { html?: string } | null)?.html;
-    await sendEmail({
+    await sendEmail(row.workspaceId, {
       to: address,
       subject: row.subject ?? "",
       text: row.body ?? "",
