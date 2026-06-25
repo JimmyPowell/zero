@@ -98,6 +98,12 @@ const issueColumns = {
   // 最新活动时间：该 issue 下任意事件（评论/模型回复/状态变更/执行）的最新时间，
   // 无事件时回退到创建时间。用关联子查询实时算，走 idx_issue_event_issue 索引。
   lastActivityAt: sql<string>`COALESCE((SELECT MAX(${schema.issueEvent.createdAt}) FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id}), ${schema.issue.createdAt})`,
+  // 「我（成员）发给 agent 的最新一条评论」正文，列表行展示用。
+  // 只取 member 的 comment（排除 agent/system 回复与无正文的状态/执行事件），
+  // 复用 idx_issue_event_issue(issueId, createdAt) 索引、取单行无额外排序代价。
+  lastMessage: sql<
+    string | null
+  >`(SELECT ${schema.issueEvent.body} FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id} AND ${schema.issueEvent.kind} = 'comment' AND ${schema.issueEvent.actorType} = 'member' AND ${schema.issueEvent.body} IS NOT NULL ORDER BY ${schema.issueEvent.createdAt} DESC LIMIT 1)`,
   baseBranch: schema.issue.baseBranch,
   workDir: schema.issue.workDir,
   projectId: schema.issue.projectId,
@@ -151,6 +157,14 @@ function isoTime(v: Date | string | null | undefined): string | null {
   return new Date(hasTz ? s : s + "Z").toISOString();
 }
 
+// 列表行的最新消息摘要：折叠空白、限长，避免把整段 markdown 拍进列表载荷
+function snippet(v: string | null | undefined, max = 160): string | null {
+  if (v == null) return null;
+  const s = String(v).replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
 function shape(row: IssueRow) {
   return {
     id: row.id,
@@ -174,6 +188,7 @@ function shape(row: IssueRow) {
     createdAt: isoTime(row.createdAt),
     updatedAt: isoTime(row.updatedAt),
     lastActivityAt: isoTime(row.lastActivityAt),
+    lastMessage: snippet(row.lastMessage),
   };
 }
 

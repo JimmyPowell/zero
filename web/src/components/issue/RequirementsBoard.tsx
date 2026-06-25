@@ -17,7 +17,7 @@ import { ActorAvatar } from "@/components/ActorAvatar";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { useIssues } from "@/lib/issues-store";
+import { useIssues, filterByProject } from "@/lib/issues-store";
 import { api } from "@/lib/api-client";
 import {
   STATUS_ORDER,
@@ -147,8 +147,10 @@ function Column({
 export function RequirementsBoard() {
   const navigate = useNavigate();
   const { currentWorkspace } = useAuth();
-  const { issues, replace } = useIssues();
+  const { issues, replace, projectFilter } = useIssues();
   const wsId = currentWorkspace?.id ?? null;
+  // 看板与列表共用同一项目筛选口径
+  const visible = filterByProject(issues, projectFilter);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(
@@ -190,7 +192,7 @@ export function RequirementsBoard() {
           <Column
             key={s}
             status={s}
-            issues={issues.filter((i) => i.status === s)}
+            issues={visible.filter((i) => i.status === s)}
             onOpen={(id) => navigate(`/issues/${id}`)}
           />
         ))}

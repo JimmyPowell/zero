@@ -33,8 +33,16 @@ export function IssueRow({
       <span title={t(sm.labelKey)} className="flex shrink-0">
         <SIcon className={cn("size-4", sm.className)} />
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-        {issue.title}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm text-foreground">{issue.title}</span>
+        {issue.lastMessage && (
+          <span
+            title={issue.lastMessage}
+            className="truncate text-xs text-muted-foreground"
+          >
+            {issue.lastMessage}
+          </span>
+        )}
       </span>
       <span
         title={t("issue.lastActivity")}

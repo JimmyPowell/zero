@@ -5,10 +5,11 @@ import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
 import { IssueRow } from "@/components/issue/IssueRow";
 import { RequirementsBoard } from "@/components/issue/RequirementsBoard";
+import { ProjectFilter } from "@/components/issue/ProjectFilter";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { useIssues } from "@/lib/issues-store";
+import { useIssues, filterByProject } from "@/lib/issues-store";
 import type { LayoutContext } from "@/components/Layout";
 
 export function RequirementsView() {
@@ -17,9 +18,10 @@ export function RequirementsView() {
   const { workspaces, currentWorkspace } = useAuth();
   const { openCreateWorkspace, openCreateIssue } =
     useOutletContext<LayoutContext>();
-  const { status, issues, error, load } = useIssues();
+  const { status, issues, error, load, projectFilter } = useIssues();
 
   const wsId = currentWorkspace?.id ?? null;
+  const filtered = filterByProject(issues, projectFilter);
 
   // 没有任何工作空间 → 引导创建
   if (workspaces.length === 0) {
@@ -52,6 +54,8 @@ export function RequirementsView() {
           {t("issue.listTitle")}
         </h2>
         <div className="flex items-center gap-2">
+          {/* 按项目筛选（选择存 issues-store，列表/看板共用） */}
+          {wsId && <ProjectFilter workspaceId={wsId} />}
           {/* 列表 / 看板 切换（选择持久化在 ui-store） */}
           <div className="flex items-center rounded-lg border border-border p-0.5">
             <button
@@ -133,9 +137,14 @@ export function RequirementsView() {
         <div className="min-h-0 flex-1 overflow-hidden">
           <RequirementsBoard />
         </div>
+      ) : filtered.length === 0 ? (
+        // 有需求但当前项目筛选下为空
+        <div className="py-12 text-center text-sm text-muted-foreground">
+          {t("issue.filterEmpty")}
+        </div>
       ) : (
         <div className="-mx-1 min-h-0 flex-1 overflow-y-auto">
-          {issues.map((issue) => (
+          {filtered.map((issue) => (
             <IssueRow
               key={issue.id}
               issue={issue}

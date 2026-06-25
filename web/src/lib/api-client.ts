@@ -108,6 +108,8 @@ export interface Issue {
   createdAt: string;
   // 最新活动时间：任意事件（评论/模型回复/状态变更/执行）的最新时间，无事件回退创建时间
   lastActivityAt: string;
+  // 「我发给 agent 的最新一条评论」摘要（已折叠空白/限长），无则为 null
+  lastMessage: string | null;
   updatedAt: string;
 }
 
