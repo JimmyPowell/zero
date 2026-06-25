@@ -194,6 +194,9 @@ export function IssueDetailView() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // 有浮层/弹窗开着时（图片灯箱 / 运行日志 / diff / 各 Dialog，均带 .zero-overlay），
+      // 按键交给浮层自己处理，详情页不抢 —— 否则在灯箱里按 Esc 会先关灯箱、又连详情页一起退掉。
+      if (document.querySelector(".zero-overlay")) return;
       const el = e.target as HTMLElement | null;
       if (
         el &&
