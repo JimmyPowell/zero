@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { Timeline } from "@/components/issue/Timeline";
 import { RunLogOverlay } from "@/components/issue/RunLogOverlay";
 import { ScrollNav } from "@/components/issue/ScrollNav";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 // 懒加载：diff 查看器（含 @git-diff-view + lowlight 语法高亮）只在点开时才拉，不压初始包
 const DiffOverlay = lazy(() =>
   import("@/components/issue/DiffOverlay").then((m) => ({
@@ -96,6 +97,9 @@ export function IssueDetailView() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const [openDiffTaskId, setOpenDiffTaskId] = useState<string | null>(null);
+  // 删除需求确认弹窗（替代原生 confirm）：open 控制显隐，deleting 防重复点击
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -127,12 +131,14 @@ export function IssueDetailView() {
   const canDeleteIssue =
     !!issue && (issue.creatorId === user?.id || canModerate);
 
+  // 确认弹窗里点「删除」后真正执行（确认 UI 见底部 ConfirmDialog）
   async function deleteIssue() {
-    if (!wsId || !issue) return;
-    if (!window.confirm(t("detail.deleteIssueConfirm"))) return;
+    if (!wsId || !issue || deleting) return;
+    setDeleting(true);
     try {
       await api.deleteIssue(wsId, issue.id);
       issuesActions.remove(issue.id);
+      setConfirmDelete(false);
       toast.success({
         title: t("toast.issueDeleted"),
         description: t("toast.trashHint"),
@@ -141,6 +147,8 @@ export function IssueDetailView() {
       goBack();
     } catch {
       toast.error({ title: t("toast.issueDeleteFailed") });
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -408,7 +416,7 @@ export function IssueDetailView() {
                     <span className="mx-1 h-4 w-px bg-border" />
                     <button
                       type="button"
-                      onClick={deleteIssue}
+                      onClick={() => setConfirmDelete(true)}
                       title={t("detail.deleteIssue")}
                       className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                     >
@@ -645,6 +653,17 @@ export function IssueDetailView() {
         />
       </Suspense>
     )}
+    <ConfirmDialog
+      open={confirmDelete}
+      title={t("detail.deleteIssue")}
+      description={t("detail.deleteIssueConfirm")}
+      confirmText={t("detail.deleteIssue")}
+      cancelText={t("common.cancel")}
+      destructive
+      busy={deleting}
+      onConfirm={deleteIssue}
+      onCancel={() => setConfirmDelete(false)}
+    />
     </>
   );
 }
