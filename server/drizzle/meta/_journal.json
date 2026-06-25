@@ -169,6 +169,20 @@
       "when": 1782097770958,
       "tag": "0023_calm_juggernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1782379931829,
+      "tag": "0024_fat_loa",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1782380936622,
+      "tag": "0025_windy_gateway",
+      "breakpoints": true
     }
   ]
 }

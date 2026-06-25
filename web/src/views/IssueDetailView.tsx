@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronRight,
+  Trash2,
 } from "lucide-react";
 
 import { Panel } from "@/components/Panel";
@@ -40,6 +41,7 @@ import {
 } from "@/components/issue/AttachmentComposer";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
+import { toast } from "@/lib/toast-store";
 import { issuesActions, useIssues, filterByProject } from "@/lib/issues-store";
 import { issueKey, statusMeta } from "@/lib/issue-meta";
 import { relativeTime } from "@/lib/time";
@@ -83,7 +85,7 @@ export function IssueDetailView() {
   const { t, locale } = useUi();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { currentWorkspace } = useAuth();
+  const { currentWorkspace, user } = useAuth();
   const wsId = currentWorkspace?.id ?? null;
   const mainRef = useRef<HTMLElement>(null);
   // 列表（沿用需求页的项目筛选上下文），用于上一条/下一条需求导航
@@ -118,6 +120,50 @@ export function IssueDetailView() {
   }
   const goPrev = () => prevIssue && navigate(`/issues/${prevIssue.id}`);
   const goNext = () => nextIssue && navigate(`/issues/${nextIssue.id}`);
+
+  // 删除/恢复权限：本人（creator/评论作者）或工作空间 admin/owner
+  const canModerate =
+    currentWorkspace?.role === "owner" || currentWorkspace?.role === "admin";
+  const canDeleteIssue =
+    !!issue && (issue.creatorId === user?.id || canModerate);
+
+  async function deleteIssue() {
+    if (!wsId || !issue) return;
+    if (!window.confirm(t("detail.deleteIssueConfirm"))) return;
+    try {
+      await api.deleteIssue(wsId, issue.id);
+      issuesActions.remove(issue.id);
+      toast.success({
+        title: t("toast.issueDeleted"),
+        description: t("toast.trashHint"),
+        to: "/trash",
+      });
+      goBack();
+    } catch {
+      toast.error({ title: t("toast.issueDeleteFailed") });
+    }
+  }
+
+  // 删除评论：不弹确认（时间线就地保留「已删除 + 恢复」占位，本身就是后悔药）
+  async function deleteComment(eventId: string) {
+    if (!wsId || !issue) return;
+    try {
+      await api.deleteComment(wsId, issue.id, eventId);
+      await refresh();
+      toast.success({ title: t("toast.commentDeleted") });
+    } catch {
+      toast.error({ title: t("toast.issueDeleteFailed") });
+    }
+  }
+  async function restoreComment(eventId: string) {
+    if (!wsId || !issue) return;
+    try {
+      await api.restoreComment(wsId, issue.id, eventId);
+      await refresh();
+    } catch {
+      toast.error({ title: t("toast.issueDeleteFailed") });
+    }
+  }
 
   useEffect(() => {
     if (!wsId || !id) return;
@@ -357,6 +403,19 @@ export function IssueDetailView() {
                 >
                   <ChevronDown className="size-4" />
                 </button>
+                {canDeleteIssue && (
+                  <>
+                    <span className="mx-1 h-4 w-px bg-border" />
+                    <button
+                      type="button"
+                      onClick={deleteIssue}
+                      title={t("detail.deleteIssue")}
+                      className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -393,6 +452,10 @@ export function IssueDetailView() {
               runs={runsById}
               onOpenRun={(taskId) => setOpenRunId(taskId)}
               onOpenDiff={(taskId) => setOpenDiffTaskId(taskId)}
+              currentUserId={user?.id ?? null}
+              canModerate={canModerate}
+              onDeleteComment={deleteComment}
+              onRestoreComment={restoreComment}
             />
 
             {/* 评论输入 */}

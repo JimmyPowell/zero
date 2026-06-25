@@ -1,11 +1,17 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, Paperclip, FileDiff } from "lucide-react";
+import {
+  ChevronRight,
+  Paperclip,
+  FileDiff,
+  Trash2,
+  RotateCcw,
+} from "lucide-react";
 
 import { ActorAvatar } from "@/components/ActorAvatar";
 import { Markdown } from "@/components/Markdown";
 import { ImageLightbox, type LightboxImage } from "@/components/issue/ImageLightbox";
 import { useUi } from "@/lib/ui-store";
-import { relativeTime } from "@/lib/time";
+import { relativeTime, useElapsedMs, formatElapsed } from "@/lib/time";
 import { statusMeta, priorityMeta } from "@/lib/issue-meta";
 import { cn } from "@/lib/utils";
 import { attachmentUrl } from "@/lib/api-client";
@@ -77,14 +83,7 @@ const RUN_PILL: Record<RunStatus, { cls: string; dot: string }> = {
   cancelled: { cls: "text-muted-foreground", dot: "bg-muted-foreground/50" },
 };
 
-function runDuration(run: RunSummary): string | null {
-  if (run.startedAt && run.finishedAt) {
-    const ms =
-      new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
-    if (ms >= 0) return `${Math.round(ms / 100) / 10}s`;
-  }
-  return null;
-}
+const ACTIVE = (s: RunStatus) => s === "queued" || s === "running";
 
 // 时间线里的「运行卡片」：状态 + 统计 + 打开执行日志
 function RunCard({
@@ -102,7 +101,9 @@ function RunCard({
 }) {
   const { t } = useUi();
   const pill = RUN_PILL[run.status];
-  const dur = runDuration(run);
+  // 运行时长：从 agent 开跑(startedAt) 起算，运行中每秒实时跳动，完成即定格
+  const elapsedMs = useElapsedMs(run.startedAt, run.finishedAt, ACTIVE(run.status));
+  const dur = elapsedMs != null ? formatElapsed(elapsedMs) : null;
   return (
     <li data-msg className="flex gap-3 py-2.5">
       <ActorAvatar
@@ -210,11 +211,19 @@ export function Timeline({
   runs = {},
   onOpenRun,
   onOpenDiff,
+  currentUserId,
+  canModerate,
+  onDeleteComment,
+  onRestoreComment,
 }: {
   events: IssueEvent[];
   runs?: Record<string, RunSummary>;
   onOpenRun?: (taskId: string) => void;
   onOpenDiff?: (taskId: string) => void;
+  currentUserId?: string | null;
+  canModerate?: boolean;
+  onDeleteComment?: (eventId: string) => void;
+  onRestoreComment?: (eventId: string) => void;
 }) {
   const { t, locale } = useUi();
 
@@ -266,8 +275,12 @@ export function Timeline({
 
         // 评论：卡片
         if (ev.kind === "comment") {
+          // 可删/可恢复：评论作者本人 或 工作空间 admin/owner
+          const canManageComment =
+            ev.actor?.type === "member" &&
+            (ev.actor.id === currentUserId || !!canModerate);
           return (
-            <li key={ev.id} data-msg className="flex gap-3 py-2.5">
+            <li key={ev.id} data-msg className="group flex gap-3 py-2.5">
               <ActorAvatar
                 type={ev.actor?.type}
                 name={ev.actor?.name}
@@ -280,26 +293,53 @@ export function Timeline({
                     {actorName}
                   </span>
                   <span className="text-xs text-muted-foreground">{time}</span>
-                </div>
-                <div className="mt-1.5 rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground">
-                  {ev.body && <Markdown>{ev.body}</Markdown>}
-                  {ev.attachments && ev.attachments.length > 0 && (
-                    <div
-                      className={cn(
-                        "flex flex-wrap gap-2",
-                        ev.body && "mt-2",
-                      )}
+                  {!ev.deleted && canManageComment && onDeleteComment && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteComment(ev.id)}
+                      title={t("timeline.deleteComment")}
+                      className="ml-auto shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                     >
-                      {ev.attachments.map((a) => (
-                        <AttachmentChip
-                          key={a.id}
-                          att={a}
-                          onOpenImage={openImage}
-                        />
-                      ))}
-                    </div>
+                      <Trash2 className="size-3.5" />
+                    </button>
                   )}
                 </div>
+                {ev.deleted ? (
+                  // 软删占位：人的视角抹掉；agent 会话里仍记得（A 方案）
+                  <div className="mt-1.5 flex items-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-3.5 py-2 text-sm text-muted-foreground italic">
+                    <span className="flex-1">{t("timeline.commentDeleted")}</span>
+                    {canManageComment && onRestoreComment && (
+                      <button
+                        type="button"
+                        onClick={() => onRestoreComment(ev.id)}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-active-fg not-italic hover:bg-sidebar-accent"
+                      >
+                        <RotateCcw className="size-3.5" />
+                        {t("timeline.restore")}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-1.5 rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground">
+                    {ev.body && <Markdown>{ev.body}</Markdown>}
+                    {ev.attachments && ev.attachments.length > 0 && (
+                      <div
+                        className={cn(
+                          "flex flex-wrap gap-2",
+                          ev.body && "mt-2",
+                        )}
+                      >
+                        {ev.attachments.map((a) => (
+                          <AttachmentChip
+                            key={a.id}
+                            att={a}
+                            onOpenImage={openImage}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </li>
           );

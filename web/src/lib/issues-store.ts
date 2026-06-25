@@ -90,6 +90,12 @@ function replace(issue: Issue) {
   emit();
 }
 
+// 软删除后从列表移除（恢复时走 refresh 重新拉回）
+function remove(issueId: string) {
+  state.issues = state.issues.filter((i) => i.id !== issueId);
+  emit();
+}
+
 // 切换项目筛选（列表/看板共用），值为 null / NO_PROJECT / project.id
 function setProjectFilter(projectId: string | null) {
   if (state.projectFilter === projectId) return;
@@ -104,6 +110,7 @@ export const issuesActions = {
   },
   prepend,
   replace,
+  remove,
   setProjectFilter,
 };
 

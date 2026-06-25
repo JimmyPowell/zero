@@ -2,7 +2,19 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { and, asc, desc, eq, gt, inArray, isNull, like, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  like,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { requireAuth } from "@/middleware/auth";
@@ -95,17 +107,20 @@ const issueColumns = {
   priority: schema.issue.priority,
   assigneeType: schema.issue.assigneeType,
   assigneeId: schema.issue.assigneeId,
+  creatorId: schema.issue.creatorId,
   createdAt: schema.issue.createdAt,
   updatedAt: schema.issue.updatedAt,
+  deletedAt: schema.issue.deletedAt,
   // 最新活动时间：该 issue 下任意事件（评论/模型回复/状态变更/执行）的最新时间，
   // 无事件时回退到创建时间。用关联子查询实时算，走 idx_issue_event_issue 索引。
-  lastActivityAt: sql<string>`COALESCE((SELECT MAX(${schema.issueEvent.createdAt}) FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id}), ${schema.issue.createdAt})`,
+  // 已软删的评论不计入活动时间。
+  lastActivityAt: sql<string>`COALESCE((SELECT MAX(${schema.issueEvent.createdAt}) FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id} AND ${schema.issueEvent.deletedAt} IS NULL), ${schema.issue.createdAt})`,
   // 「我（成员）发给 agent 的最新一条评论」正文，列表行展示用。
-  // 只取 member 的 comment（排除 agent/system 回复与无正文的状态/执行事件），
+  // 只取 member 的 comment（排除 agent/system 回复、无正文与已软删的评论），
   // 复用 idx_issue_event_issue(issueId, createdAt) 索引、取单行无额外排序代价。
   lastMessage: sql<
     string | null
-  >`(SELECT ${schema.issueEvent.body} FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id} AND ${schema.issueEvent.kind} = 'comment' AND ${schema.issueEvent.actorType} = 'member' AND ${schema.issueEvent.body} IS NOT NULL ORDER BY ${schema.issueEvent.createdAt} DESC LIMIT 1)`,
+  >`(SELECT ${schema.issueEvent.body} FROM ${schema.issueEvent} WHERE ${schema.issueEvent.issueId} = ${schema.issue.id} AND ${schema.issueEvent.kind} = 'comment' AND ${schema.issueEvent.actorType} = 'member' AND ${schema.issueEvent.body} IS NOT NULL AND ${schema.issueEvent.deletedAt} IS NULL ORDER BY ${schema.issueEvent.createdAt} DESC LIMIT 1)`,
   baseBranch: schema.issue.baseBranch,
   workDir: schema.issue.workDir,
   projectId: schema.issue.projectId,
@@ -187,6 +202,7 @@ function shape(row: IssueRow) {
     project: row.projectId
       ? { id: row.projectId, title: row.projectTitle, slug: row.projectSlug }
       : null,
+    creatorId: row.creatorId,
     createdAt: isoTime(row.createdAt),
     updatedAt: isoTime(row.updatedAt),
     lastActivityAt: isoTime(row.lastActivityAt),
@@ -269,6 +285,17 @@ async function validateProject(
   return rows.length > 0;
 }
 
+// 删除/恢复权限：本人（issue creator 或评论作者）或工作空间 admin/owner。
+async function canManage(
+  workspaceId: string,
+  userId: string,
+  ownerId: string | null,
+): Promise<boolean> {
+  if (ownerId && ownerId === userId) return true;
+  const m = await getMembership(userId, workspaceId);
+  return m?.role === "owner" || m?.role === "admin";
+}
+
 export const issueRoutes = new Hono<WorkspaceEnv>()
   .use(requireAuth)
   .use(requireWorkspaceMember)
@@ -288,7 +315,10 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       const { sub } = c.get("user");
       const { status, assignee, projectId } = c.req.valid("query");
 
-      const filters = [eq(schema.issue.workspaceId, workspaceId)];
+      const filters = [
+        eq(schema.issue.workspaceId, workspaceId),
+        isNull(schema.issue.deletedAt), // 排除回收站里的
+      ];
       if (status) filters.push(eq(schema.issue.status, status));
       if (projectId) filters.push(eq(schema.issue.projectId, projectId));
       if (assignee === "me") {
@@ -315,6 +345,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         .where(
           and(
             eq(schema.issue.workspaceId, workspaceId),
+            isNull(schema.issue.deletedAt),
             or(like(schema.issue.title, kw), like(schema.issue.description, kw)),
           ),
         )
@@ -323,6 +354,28 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       return c.json({ issues: rows.map(shape) });
     },
   )
+  // 回收站：本工作空间内已软删的需求（admin/owner 看全部，普通成员只看自己创建的）
+  .get("/trash", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const m = await getMembership(sub, workspaceId);
+    const isAdmin = m?.role === "owner" || m?.role === "admin";
+    const filters = [
+      eq(schema.issue.workspaceId, workspaceId),
+      isNotNull(schema.issue.deletedAt),
+    ];
+    if (!isAdmin) filters.push(eq(schema.issue.creatorId, sub));
+    const rows = await baseIssueQuery()
+      .where(and(...filters))
+      .orderBy(desc(schema.issue.deletedAt))
+      .limit(200);
+    return c.json({
+      issues: rows.map((r) => ({
+        ...shape(r),
+        deletedAt: isoTime(r.deletedAt),
+      })),
+    });
+  })
   // 创建
   .post("/", zValidator("json", createSchema), async (c) => {
     const workspaceId = c.get("workspaceId");
@@ -431,7 +484,11 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     const id = c.req.param("id");
     const [row] = await baseIssueQuery()
       .where(
-        and(eq(schema.issue.id, id), eq(schema.issue.workspaceId, workspaceId)),
+        and(
+          eq(schema.issue.id, id),
+          eq(schema.issue.workspaceId, workspaceId),
+          isNull(schema.issue.deletedAt),
+        ),
       )
       .limit(1);
     if (!row) return c.json({ error: "需求不存在" }, 404);
@@ -599,6 +656,51 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       .limit(1);
     return c.json({ issue: shapeDetail(row!) });
   })
+  // 软删除需求（回收站可恢复）。权限：creator 本人 或 admin/owner。底层会话/历史不动。
+  .delete("/:id", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const id = c.req.param("id");
+    const [iss] = await db
+      .select({ creatorId: schema.issue.creatorId, deletedAt: schema.issue.deletedAt })
+      .from(schema.issue)
+      .where(
+        and(eq(schema.issue.id, id), eq(schema.issue.workspaceId, workspaceId)),
+      )
+      .limit(1);
+    if (!iss || iss.deletedAt) return c.json({ error: "需求不存在" }, 404);
+    if (!(await canManage(workspaceId, sub, iss.creatorId)))
+      return c.json({ error: "无权删除该需求" }, 403);
+    await db
+      .update(schema.issue)
+      .set({ deletedAt: new Date(), deletedBy: sub })
+      .where(eq(schema.issue.id, id));
+    return c.json({ ok: true });
+  })
+  // 从回收站恢复需求。权限同删除。
+  .post("/:id/restore", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const id = c.req.param("id");
+    const [iss] = await db
+      .select({ creatorId: schema.issue.creatorId, deletedAt: schema.issue.deletedAt })
+      .from(schema.issue)
+      .where(
+        and(eq(schema.issue.id, id), eq(schema.issue.workspaceId, workspaceId)),
+      )
+      .limit(1);
+    if (!iss || !iss.deletedAt) return c.json({ error: "需求不在回收站" }, 404);
+    if (!(await canManage(workspaceId, sub, iss.creatorId)))
+      return c.json({ error: "无权恢复该需求" }, 403);
+    await db
+      .update(schema.issue)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(eq(schema.issue.id, id));
+    const [row] = await baseIssueQuery()
+      .where(eq(schema.issue.id, id))
+      .limit(1);
+    return c.json({ issue: shapeDetail(row!) });
+  })
   // 时间线：事件流（评论 + 变更，按时间正序）
   .get("/:id/events", async (c) => {
     const workspaceId = c.get("workspaceId");
@@ -621,6 +723,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         actorType: schema.issueEvent.actorType,
         actorId: schema.issueEvent.actorId,
         createdAt: schema.issueEvent.createdAt,
+        deletedAt: schema.issueEvent.deletedAt,
         memberName: schema.user.name,
         memberAvatar: schema.user.avatarUrl,
         agentName: schema.agent.name,
@@ -658,23 +761,28 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     }
 
     return c.json({
-      events: rows.map((r) => ({
-        id: r.id,
-        kind: r.kind,
-        body: r.body,
-        meta: r.meta,
-        createdAt: r.createdAt,
-        actor:
-          r.actorType && r.actorId
-            ? {
-                type: r.actorType,
-                id: r.actorId,
-                name: r.agentName ?? r.memberName,
-                avatarUrl: r.agentAvatar ?? r.memberAvatar,
-              }
-            : null,
-        attachments: attByEvent.get(r.id) ?? [],
-      })),
+      events: rows.map((r) => {
+        const deleted = !!r.deletedAt;
+        return {
+          id: r.id,
+          kind: r.kind,
+          // 已软删的评论：不回传正文/附件，前端渲染「该评论已删除」占位
+          body: deleted ? null : r.body,
+          meta: r.meta,
+          createdAt: r.createdAt,
+          deleted,
+          actor:
+            r.actorType && r.actorId
+              ? {
+                  type: r.actorType,
+                  id: r.actorId,
+                  name: r.agentName ?? r.memberName,
+                  avatarUrl: r.agentAvatar ?? r.memberAvatar,
+                }
+              : null,
+          attachments: deleted ? [] : (attByEvent.get(r.id) ?? []),
+        };
+      }),
     });
   })
   // 发表评论
@@ -742,6 +850,69 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       },
       201,
     );
+  })
+  // 软删除评论（仅 kind='comment'）。权限：评论作者本人 或 admin/owner。
+  // agent 的 CLI 会话里仍记得该评论（按 A 方案：删除=人的视角抹掉）。
+  .delete("/:id/events/:eventId", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const id = c.req.param("id");
+    const eventId = c.req.param("eventId");
+    const [ev] = await db
+      .select({
+        kind: schema.issueEvent.kind,
+        actorId: schema.issueEvent.actorId,
+        deletedAt: schema.issueEvent.deletedAt,
+      })
+      .from(schema.issueEvent)
+      .where(
+        and(
+          eq(schema.issueEvent.id, eventId),
+          eq(schema.issueEvent.issueId, id),
+          eq(schema.issueEvent.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    if (!ev || ev.deletedAt) return c.json({ error: "评论不存在" }, 404);
+    if (ev.kind !== "comment")
+      return c.json({ error: "只能删除评论" }, 400);
+    if (!(await canManage(workspaceId, sub, ev.actorId)))
+      return c.json({ error: "无权删除该评论" }, 403);
+    await db
+      .update(schema.issueEvent)
+      .set({ deletedAt: new Date(), deletedBy: sub })
+      .where(eq(schema.issueEvent.id, eventId));
+    return c.json({ ok: true });
+  })
+  // 恢复评论。权限同删除。
+  .post("/:id/events/:eventId/restore", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const id = c.req.param("id");
+    const eventId = c.req.param("eventId");
+    const [ev] = await db
+      .select({
+        kind: schema.issueEvent.kind,
+        actorId: schema.issueEvent.actorId,
+        deletedAt: schema.issueEvent.deletedAt,
+      })
+      .from(schema.issueEvent)
+      .where(
+        and(
+          eq(schema.issueEvent.id, eventId),
+          eq(schema.issueEvent.issueId, id),
+          eq(schema.issueEvent.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    if (!ev || !ev.deletedAt) return c.json({ error: "评论不在回收站" }, 404);
+    if (!(await canManage(workspaceId, sub, ev.actorId)))
+      return c.json({ error: "无权恢复该评论" }, 403);
+    await db
+      .update(schema.issueEvent)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(eq(schema.issueEvent.id, eventId));
+    return c.json({ ok: true });
   })
   // 某 issue 的所有执行（run/task）摘要 —— 供运行卡片 + 日志浮层头部统计
   .get("/:id/runs", async (c) => {

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { createMiddleware } from "hono/factory";
-import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { hashToken } from "@/lib/token";
@@ -366,6 +366,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     const conds = [
       eq(schema.issueEvent.issueId, id),
       eq(schema.issueEvent.kind, "comment"),
+      isNull(schema.issueEvent.deletedAt), // 已软删评论不回灌给 agent
     ];
     if (before) {
       const d = new Date(before);

@@ -12,6 +12,7 @@ import {
   SquarePen,
   Settings,
   Workflow,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -261,8 +262,15 @@ export function Layout() {
           ))}
         </nav>
 
-        {/* 底部：设置 + 折叠收起 */}
+        {/* 底部：回收站 + 设置 + 折叠收起 */}
         <div className="mt-auto flex flex-col gap-0.5">
+          <NavLinkItem
+            to="/trash"
+            icon={Trash2}
+            label={t("menu.trash")}
+            active={isActive("trash")}
+            collapsed={collapsed}
+          />
           <NavLinkItem
             to="/settings"
             icon={Settings}

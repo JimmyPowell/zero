@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { signAttachmentPath } from "@/lib/storage";
@@ -13,7 +13,7 @@ export async function enqueueTaskForIssue(
   const [iss] = await db
     .select()
     .from(schema.issue)
-    .where(eq(schema.issue.id, issueId))
+    .where(and(eq(schema.issue.id, issueId), isNull(schema.issue.deletedAt)))
     .limit(1);
   if (!iss) return null;
   // 仅指派给 agent、且已移出 backlog 才执行
@@ -146,6 +146,7 @@ export async function assembleContext(
       and(
         eq(schema.issueEvent.issueId, issueId),
         eq(schema.issueEvent.kind, "comment"),
+        isNull(schema.issueEvent.deletedAt), // 已软删评论不进 agent 上下文
       ),
     )
     .orderBy(desc(schema.issueEvent.createdAt))

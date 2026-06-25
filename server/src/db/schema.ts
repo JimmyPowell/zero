@@ -101,6 +101,9 @@ export const issue = mysqlTable(
     baseBranch: varchar("base_branch", { length: 255 }),
     workDir: text("work_dir"),
     dueDate: timestamp("due_date"),
+    // 软删除：非空=已删（回收站可恢复）。底层 CLI 会话/历史一律不动。
+    deletedAt: timestamp("deleted_at"),
+    deletedBy: char("deleted_by", { length: 36 }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
   },
@@ -233,6 +236,9 @@ export const issueEvent = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 })
       .notNull()
       .default(sql`(now(3))`),
+    // 软删除：仅对 kind='comment' 开放。删除=人的视角抹掉；agent CLI 会话里仍记得。
+    deletedAt: timestamp("deleted_at", { fsp: 3 }),
+    deletedBy: char("deleted_by", { length: 36 }),
   },
   (t) => [index("idx_issue_event_issue").on(t.issueId, t.createdAt)],
 );

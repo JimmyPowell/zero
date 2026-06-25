@@ -105,6 +105,7 @@ export interface Issue {
   priority: IssuePriority;
   assignee: IssueAssignee | null;
   project: { id: string; title: string | null; slug: string | null } | null;
+  creatorId: string;
   createdAt: string;
   // 最新活动时间：任意事件（评论/模型回复/状态变更/执行）的最新时间，无事件回退创建时间
   lastActivityAt: string;
@@ -197,6 +198,12 @@ export interface IssueEvent {
   createdAt: string;
   actor: EventActor | null;
   attachments?: Attachment[];
+  deleted?: boolean; // 软删的评论：body 为 null，前端渲染「已删除」占位
+}
+
+// 回收站项：已软删的需求
+export interface TrashIssue extends Issue {
+  deletedAt: string;
 }
 
 // ---- 执行（run / task）+ 细粒度执行日志 ----
@@ -698,6 +705,33 @@ export const api = {
       method: "PATCH",
       body: patch,
     }),
+
+  // ---- 删除 / 回收站（软删除）----
+  deleteIssue: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/issues/${id}`, {
+      method: "DELETE",
+    }),
+
+  restoreIssue: (workspaceId: string, id: string) =>
+    request<{ issue: IssueDetail }>(
+      `/workspaces/${workspaceId}/issues/${id}/restore`,
+      { method: "POST", body: {} },
+    ),
+
+  listTrash: (workspaceId: string) =>
+    request<{ issues: TrashIssue[] }>(`/workspaces/${workspaceId}/issues/trash`),
+
+  deleteComment: (workspaceId: string, issueId: string, eventId: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/issues/${issueId}/events/${eventId}`,
+      { method: "DELETE" },
+    ),
+
+  restoreComment: (workspaceId: string, issueId: string, eventId: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/issues/${issueId}/events/${eventId}/restore`,
+      { method: "POST", body: {} },
+    ),
 
   listEvents: (workspaceId: string, id: string) =>
     request<{ events: IssueEvent[] }>(

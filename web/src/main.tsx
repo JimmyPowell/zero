@@ -18,6 +18,7 @@ import { AgentsView } from "@/views/AgentsView";
 import { AgentDetailView } from "@/views/AgentDetailView";
 import { SkillsView } from "@/views/SkillsView";
 import { AutomationView } from "@/views/AutomationView";
+import { TrashView } from "@/views/TrashView";
 import { RuntimesView } from "@/views/RuntimesView";
 import { RuntimeDetailView } from "@/views/RuntimeDetailView";
 import { SettingsView } from "@/views/SettingsView";
@@ -73,6 +74,7 @@ const router = createBrowserRouter([
       { path: "agents/:id", element: <AgentDetailView /> },
       { path: "skills", element: <SkillsView /> },
       { path: "automation", element: <AutomationView /> },
+      { path: "trash", element: <TrashView /> },
       { path: "settings", element: <SettingsView /> },
       { path: "*", element: <Navigate to="/requirements" replace /> },
     ],
