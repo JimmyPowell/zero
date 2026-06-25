@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Copy, Filter, X, Check, ChevronRight, Square } from "lucide-react";
+import { Copy, Filter, X, Check, ChevronRight, Square, Clock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +12,7 @@ import {
 import { providerLabel } from "@/components/CreateAgentDialog";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
-import { relativeTime } from "@/lib/time";
+import { relativeTime, useElapsedMs, formatElapsed } from "@/lib/time";
 import {
   api,
   type RunEventRow,
@@ -157,15 +157,6 @@ const FILTER_TYPES: Record<FilterKey, RunEventType[] | null> = {
   errors: ["error"],
 };
 
-function fmtDuration(run: RunSummary): string | null {
-  if (run.startedAt && run.finishedAt) {
-    const ms =
-      new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
-    if (ms >= 0) return `${Math.round(ms / 100) / 10}s`;
-  }
-  return null;
-}
-
 export function RunLogOverlay({
   workspaceId,
   issueId,
@@ -306,7 +297,8 @@ export function RunLogOverlay({
     return { topLevel: top, childrenByParent: kids };
   }, [shown]);
 
-  const duration = fmtDuration(run);
+  // 运行时长：从 agent 开跑(startedAt) 起算，运行中每秒实时跳动，完成即定格
+  const elapsedMs = useElapsedMs(run.startedAt, run.finishedAt, ACTIVE(status));
   const pill = STATUS_PILL[status];
 
   async function cancelRun() {
@@ -451,7 +443,12 @@ export function RunLogOverlay({
               </span>
             )}
             {run.runtimeName && <span>{run.runtimeName}</span>}
-            {duration && <span>{duration}</span>}
+            {elapsedMs != null && (
+              <span className="inline-flex items-center gap-1 font-mono tabular-nums text-foreground">
+                <Clock className="size-3.5" />
+                {formatElapsed(elapsedMs)}
+              </span>
+            )}
             <span>
               {toolCalls} {t("runlog.toolCalls")}
             </span>
