@@ -195,6 +195,9 @@ export function IssueDetailView() {
         setAgents(a.agents);
         setProjects(p.projects);
         setStatus("ready");
+        // 打开即标记已读：更新服务端已读水位 + 本地列表即时清掉未读标记
+        void api.markIssueRead(wsId, id).catch(() => {});
+        issuesActions.markRead(id);
       })
       .catch(() => alive && setStatus("error"));
     return () => {

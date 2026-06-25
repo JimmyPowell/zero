@@ -17,7 +17,7 @@ import { ActorAvatar } from "@/components/ActorAvatar";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { useIssues, filterByProject } from "@/lib/issues-store";
+import { useIssues, filterByProject, sortIssues } from "@/lib/issues-store";
 import { api } from "@/lib/api-client";
 import {
   STATUS_ORDER,
@@ -45,11 +45,24 @@ function BoardCard({ issue, dragging }: { issue: Issue; dragging?: boolean }) {
         <span className="font-mono text-[11px] text-muted-foreground">
           {issueKey(issue.number)}
         </span>
+        {issue.unread && (
+          <span
+            title={t("issue.unread")}
+            className="size-1.5 shrink-0 rounded-full bg-[#2563eb]"
+          />
+        )}
         <span title={t(pm.labelKey)} className="ml-auto flex shrink-0">
           <PIcon className={cn("size-3.5", pm.className)} />
         </span>
       </div>
-      <p className="line-clamp-2 text-sm text-foreground">{issue.title}</p>
+      <p
+        className={cn(
+          "line-clamp-2 text-sm text-foreground",
+          issue.unread && "font-semibold",
+        )}
+      >
+        {issue.title}
+      </p>
       {issue.assignee && (
         <div className="mt-2 flex items-center">
           <ActorAvatar
@@ -146,11 +159,12 @@ function Column({
 // 需求看板：按状态分列，跨列拖拽 = 改状态（走现成 PATCH，自动写时间线）
 export function RequirementsBoard() {
   const navigate = useNavigate();
+  const { issueSort } = useUi();
   const { currentWorkspace } = useAuth();
   const { issues, replace, projectFilter } = useIssues();
   const wsId = currentWorkspace?.id ?? null;
-  // 看板与列表共用同一项目筛选口径
-  const visible = filterByProject(issues, projectFilter);
+  // 看板与列表共用同一项目筛选 + 排序口径（列内卡片按排序规则排列）
+  const visible = sortIssues(filterByProject(issues, projectFilter), issueSort);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const sensors = useSensors(

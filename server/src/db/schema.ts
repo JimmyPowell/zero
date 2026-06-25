@@ -12,6 +12,7 @@ import {
   mysqlEnum,
   unique,
   index,
+  primaryKey,
 } from "drizzle-orm/mysql-core";
 
 // 用户：邮箱 + 密码登录
@@ -242,6 +243,32 @@ export const issueEvent = mysqlTable(
   },
   (t) => [index("idx_issue_event_issue").on(t.issueId, t.createdAt)],
 );
+
+// 需求「已读水位」：每用户 × 每需求记一个「最后已读时刻」。列表据此算未读
+//（未读 = 我上次读之后，有他人 / agent / 系统的新活动）。进需求详情页即 upsert 到 now。
+export const issueRead = mysqlTable(
+  "issue_read",
+  {
+    userId: char("user_id", { length: 36 })
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    issueId: char("issue_id", { length: 36 })
+      .notNull()
+      .references(() => issue.id, { onDelete: "cascade" }),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    // 毫秒精度，与 issue_event.created_at(fsp:3) 同口径比较
+    lastReadAt: timestamp("last_read_at", { fsp: 3 })
+      .notNull()
+      .default(sql`(now(3))`),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.issueId] }),
+    index("idx_issue_read_issue").on(t.issueId),
+  ],
+);
+export type IssueRead = typeof issueRead.$inferSelect;
 
 // 评论附件：先上传（issueEventId 空），发评论时按 attachmentIds 关联到该评论。
 // 随 issue/评论级联删除；存储 storageKey 指向 ATTACHMENTS_DIR 下的相对路径。
