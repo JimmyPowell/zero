@@ -86,7 +86,8 @@ function ChannelCard({
 }) {
   const { t } = useUi();
   const baseValue = binding?.config[configKey] ?? defaultValue;
-  const baseEnabled = binding ? binding.enabled : true;
+  // 未配置（无 binding）默认关：开关与状态标记都显示「关」，与真实状态一致（开了才算开）
+  const baseEnabled = binding ? binding.enabled : false;
 
   const [value, setValue] = useState(baseValue);
   const [enabled, setEnabled] = useState(baseEnabled);
@@ -97,12 +98,11 @@ function ChannelCard({
   // 绑定变化（首次加载 / 保存后重载）→ 同步本地态
   useEffect(() => {
     setValue(binding?.config[configKey] ?? defaultValue);
-    setEnabled(binding ? binding.enabled : true);
+    setEnabled(binding ? binding.enabled : false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [binding]);
 
   const dirty = value !== baseValue || enabled !== baseEnabled;
-  const active = binding != null && binding.enabled;
 
   async function save() {
     if (!wsId || saving) return;
@@ -145,19 +145,22 @@ function ChannelCard({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-foreground">
-              {label}
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-medium text-foreground">
+                {label}
+              </p>
+              {/* 状态标记跟随开关的实时状态（enabled），与开关永远一致 */}
               <span
                 className={cn(
-                  "ml-2 rounded-full px-2 py-0.5 text-[11px] font-normal",
-                  active
+                  "flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none font-normal",
+                  enabled
                     ? "bg-emerald-500/10 text-emerald-600"
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {active ? t("settings.on") : t("settings.off")}
+                {enabled ? t("settings.on") : t("settings.off")}
               </span>
-            </p>
+            </div>
             <Switch checked={enabled} onChange={setEnabled} />
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
@@ -371,7 +374,8 @@ function SmtpServerCard({ wsId }: { wsId: string | null }) {
   const [pass, setPass] = useState("");
   const [from, setFrom] = useState("");
   const [fromName, setFromName] = useState("Zero");
-  const [enabled, setEnabled] = useState(true);
+  // 未加载到配置前默认关：开关与状态标记一致显示「关」（配置加载后用 config.enabled 覆盖）
+  const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -459,19 +463,22 @@ function SmtpServerCard({ wsId }: { wsId: string | null }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-foreground">
-              {t("settings.smtpTitle")}
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-medium text-foreground">
+                {t("settings.smtpTitle")}
+              </p>
+              {/* 状态标记跟随开关的实时状态（enabled），与开关永远一致 */}
               <span
                 className={cn(
-                  "ml-2 rounded-full px-2 py-0.5 text-[11px] font-normal",
-                  enabled && host
+                  "flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none font-normal",
+                  enabled
                     ? "bg-emerald-500/10 text-emerald-600"
                     : "bg-muted text-muted-foreground",
                 )}
               >
-                {enabled && host ? t("settings.on") : t("settings.off")}
+                {enabled ? t("settings.on") : t("settings.off")}
               </span>
-            </p>
+            </div>
             <Switch checked={enabled} onChange={setEnabled} />
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
