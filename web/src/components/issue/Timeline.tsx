@@ -390,19 +390,32 @@ export function Timeline({
           text = ev.kind;
         }
 
+        // 「创建」事件若带正文附件（新建需求弹窗粘贴/拖拽进来的）→ 在该行下方显示 chip
+        const createdAtts =
+          ev.kind === "created" ? (ev.attachments ?? []) : [];
         return (
           <li
             key={ev.id}
-            className="flex items-center gap-2.5 py-1.5 text-sm text-muted-foreground"
+            className={cn(
+              "flex gap-2.5 py-1.5 text-sm text-muted-foreground",
+              createdAtts.length ? "items-start" : "items-center",
+            )}
           >
             <span className="flex size-7 shrink-0 items-center justify-center">
               <span className="size-1.5 rounded-full bg-muted-foreground/40" />
             </span>
-            <span className="min-w-0">
+            <div className="min-w-0">
               <span className="font-medium text-foreground">{actorName}</span>{" "}
               {text}
               <span className="text-muted-foreground/70"> · {time}</span>
-            </span>
+              {createdAtts.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  {createdAtts.map((a) => (
+                    <AttachmentChip key={a.id} att={a} onOpenImage={openImage} />
+                  ))}
+                </div>
+              )}
+            </div>
           </li>
         );
       })}

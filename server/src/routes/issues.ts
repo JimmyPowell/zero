@@ -40,6 +40,8 @@ const createSchema = z.object({
   repoId: z.string().uuid().optional(),
   baseBranch: z.string().trim().max(255).optional(),
   workDir: z.string().trim().max(1000).optional(),
+  // 正文里粘贴/拖拽的附件（创建时 link 到新 issue）
+  attachmentIds: z.array(z.string().uuid()).max(20).optional(),
 });
 
 const updateSchema = z
@@ -396,6 +398,20 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         actorId: sub,
         kind: "created",
       });
+      // 正文里粘贴/拖拽的附件：认领到本 issue + created 事件。
+      // dispatch 按 issueId 取附件 → agent 首轮即可见；仅认领本空间内尚未 link 的孤儿附件。
+      if (body.attachmentIds?.length) {
+        await tx
+          .update(schema.attachment)
+          .set({ issueId: id, issueEventId: createdEventId })
+          .where(
+            and(
+              inArray(schema.attachment.id, body.attachmentIds),
+              eq(schema.attachment.workspaceId, workspaceId),
+              isNull(schema.attachment.issueEventId),
+            ),
+          );
+      }
     });
 
     // 指派给 agent 且非 backlog → 派发执行

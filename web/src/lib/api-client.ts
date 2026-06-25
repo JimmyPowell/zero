@@ -124,6 +124,7 @@ export interface CreateIssuePayload {
   repoId?: string;
   baseBranch?: string;
   workDir?: string;
+  attachmentIds?: string[]; // 正文里粘贴/拖拽的附件，创建时 link 到新 issue
 }
 
 export interface Repo {

@@ -19,7 +19,11 @@ import {
   DropdownMenuCheck,
 } from "@/components/ui/dropdown-menu";
 import { pillTrigger } from "@/components/issue/pill";
-import { FolderKanban, ChevronDown } from "lucide-react";
+import {
+  useAttachmentComposer,
+  PendingAttachments,
+} from "@/components/issue/AttachmentComposer";
+import { FolderKanban, ChevronDown, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import { toast } from "@/lib/toast-store";
@@ -59,6 +63,8 @@ export function CreateIssueDialog({
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 正文粘贴/拖拽/选文件的附件编排（与详情页评论框共用）
+  const att = useAttachmentComposer(workspaceId);
 
   // 打开时拉取成员 + 智能体供指派
   useEffect(() => {
@@ -81,11 +87,14 @@ export function CreateIssueDialog({
     };
   }, [open, workspaceId]);
 
-  // Esc 关闭
+  // Esc 关闭。本弹窗自身是一层 .zero-overlay；若上面还叠了更高的浮层
+  // （正文附件的图片灯箱，也是 .zero-overlay），Esc 交给它，弹窗不抢，避免一起退掉。
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (document.querySelectorAll(".zero-overlay").length > 1) return;
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -102,6 +111,7 @@ export function CreateIssueDialog({
     setAssignee(null);
     setProjectId(null);
     setError(null);
+    att.reset();
   }
 
   async function submit(e?: FormEvent) {
@@ -123,6 +133,9 @@ export function CreateIssueDialog({
           : {}),
         ...(binding.kind === "dir" && binding.workDir.trim()
           ? { workDir: binding.workDir.trim() }
+          : {}),
+        ...(att.pending.length
+          ? { attachmentIds: att.pending.map((p) => p.id) }
           : {}),
       });
       onCreated(issue);
@@ -167,12 +180,37 @@ export function CreateIssueDialog({
             placeholder={t("issue.titlePh")}
             className="w-full bg-transparent text-[17px] font-medium text-foreground outline-none placeholder:text-muted-foreground/70"
           />
+          <PendingAttachments
+            className="mb-1 mt-3 flex flex-wrap items-start gap-2"
+            pending={att.pending}
+            onRemove={att.removeOne}
+          />
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            onPaste={att.dropzone.onPaste}
+            onDrop={att.dropzone.onDrop}
+            onDragOver={att.dropzone.onDragOver}
+            onDragLeave={att.dropzone.onDragLeave}
             placeholder={t("issue.descPh")}
-            className="mt-2.5 min-h-[110px] w-full resize-none bg-transparent text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70"
+            className={cn(
+              "mt-2.5 min-h-[110px] w-full resize-none rounded-lg bg-transparent text-sm leading-relaxed text-foreground outline-none transition-shadow placeholder:text-muted-foreground/70",
+              att.dragOver && "ring-2 ring-active-fg/30",
+            )}
           />
+          <label className="mt-0.5 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
+            <Paperclip className="size-3.5" />
+            {att.uploading ? t("detail.uploading") : t("detail.attach")}
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                void att.pickFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
         </div>
 
         {/* 属性胶囊行 */}

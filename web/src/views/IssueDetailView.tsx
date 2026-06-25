@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Paperclip,
-  X,
   FolderKanban,
   ChevronDown,
   ChevronUp,
@@ -36,9 +35,9 @@ const DiffOverlay = lazy(() =>
 );
 import { DescriptionField } from "@/components/issue/DescriptionField";
 import {
-  ImageLightbox,
-  type LightboxImage,
-} from "@/components/issue/ImageLightbox";
+  useAttachmentComposer,
+  PendingAttachments,
+} from "@/components/issue/AttachmentComposer";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import { issuesActions, useIssues, filterByProject } from "@/lib/issues-store";
@@ -46,8 +45,6 @@ import { issueKey, statusMeta } from "@/lib/issue-meta";
 import { relativeTime } from "@/lib/time";
 import {
   api,
-  attachmentUrl,
-  type Attachment,
   type IssueDetail,
   type IssueEvent,
   type Member,
@@ -56,12 +53,6 @@ import {
   type RunSummary,
   type UpdateIssuePayload,
 } from "@/lib/api-client";
-
-function fmtSize(n: number): string {
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)}MB`;
-  if (n >= 1 << 10) return `${Math.round(n / (1 << 10))}KB`;
-  return `${n}B`;
-}
 
 function PropRow({
   label,
@@ -110,10 +101,8 @@ export function IssueDetailView() {
   const [editTitle, setEditTitle] = useState("");
   const [comment, setComment] = useState("");
   const [posting, setPosting] = useState(false);
-  const [pending, setPending] = useState<Attachment[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [pendingLightbox, setPendingLightbox] = useState<number | null>(null);
+  // 评论框附件编排（粘贴/拖拽/选文件 → 即传 → 待发；发评论时带 id）
+  const att = useAttachmentComposer(wsId);
 
   // 上一条 / 下一条需求：在「按当前项目筛选后的列表」里定位本 issue 的邻居
   const navList = filterByProject(issues, projectFilter);
@@ -254,58 +243,24 @@ export function IssueDetailView() {
 
   async function postComment() {
     const body = comment.trim();
-    if ((!body && pending.length === 0) || !wsId || !issue || posting) return;
+    if ((!body && att.pending.length === 0) || !wsId || !issue || posting)
+      return;
     setPosting(true);
     try {
       const { event } = await api.addComment(
         wsId,
         issue.id,
         body,
-        pending.map((p) => p.id),
+        att.pending.map((p) => p.id),
       );
       setEvents((prev) => [...prev, event]);
       setComment("");
-      setPending([]);
+      att.reset();
       // 评论可能触发了 agent 执行 → 拉取最新运行卡片（并启动轮询）
       await refresh();
     } finally {
       setPosting(false);
     }
-  }
-
-  // 选文件即上传，拿到 id 进待发列表（提交评论时一起 link）
-  async function onPickFiles(files: FileList | null) {
-    if (!files || !files.length || !wsId) return;
-    setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        try {
-          const { attachment } = await api.uploadAttachment(wsId, file);
-          setPending((prev) => [...prev, attachment]);
-        } catch {
-          /* 单个失败忽略，继续传其余 */
-        }
-      }
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  // 直接粘贴图片/文件：从剪贴板取出文件，走同一条上传链路
-  function onPasteFiles(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const files = e.clipboardData?.files;
-    if (files && files.length > 0) {
-      e.preventDefault(); // 有文件时拦截，避免把文件名当文本插入
-      void onPickFiles(files);
-    }
-  }
-
-  // 拖拽文件到输入框
-  function onDropFiles(e: React.DragEvent<HTMLTextAreaElement>) {
-    e.preventDefault();
-    setDragOver(false);
-    const files = e.dataTransfer?.files;
-    if (files && files.length > 0) void onPickFiles(files);
   }
 
   if (status === "loading") {
@@ -341,13 +296,6 @@ export function IssueDetailView() {
   const runsById = Object.fromEntries(runs.map((r) => [r.taskId, r]));
   const openRun = openRunId ? runsById[openRunId] : null;
   const StatusIcon = statusMeta[issue.status].Icon;
-
-  // 待发图片附件（用于 chip 缩略图 + 灯箱左右切换）；按 id 定位，避免同名误开
-  const pendingImageAtts = pending.filter((p) => p.mime.startsWith("image/"));
-  const pendingImages: LightboxImage[] = pendingImageAtts.map((p) => ({
-    url: attachmentUrl(p.url),
-    filename: p.filename,
-  }));
 
   return (
     <>
@@ -450,62 +398,10 @@ export function IssueDetailView() {
             {/* 评论输入 */}
             <div className="mt-4">
               {/* 待发附件：图片显缩略图（点开灯箱），其它显文件 chip */}
-              {pending.length > 0 && (
-                <div className="mb-2 flex flex-wrap items-start gap-2">
-                  {pending.map((a) => {
-                    const remove = () =>
-                      setPending((p) => p.filter((x) => x.id !== a.id));
-                    if (a.mime.startsWith("image/")) {
-                      const imgIdx = pendingImageAtts.findIndex(
-                        (x) => x.id === a.id,
-                      );
-                      return (
-                        <div key={a.id} className="group relative">
-                          <button
-                            type="button"
-                            onClick={() => setPendingLightbox(imgIdx)}
-                            className="block cursor-zoom-in"
-                          >
-                            <img
-                              src={attachmentUrl(a.url)}
-                              alt={a.filename}
-                              className="size-16 rounded-lg border border-border object-cover transition-opacity hover:opacity-90"
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={remove}
-                            className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </div>
-                      );
-                    }
-                    return (
-                      <span
-                        key={a.id}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-xs"
-                      >
-                        <Paperclip className="size-3 text-muted-foreground" />
-                        <span className="max-w-[160px] truncate text-foreground">
-                          {a.filename}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {fmtSize(a.size)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={remove}
-                          className="text-muted-foreground transition-colors hover:text-foreground"
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
+              <PendingAttachments
+                pending={att.pending}
+                onRemove={att.removeOne}
+              />
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -513,29 +409,26 @@ export function IssueDetailView() {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter")
                     void postComment();
                 }}
-                onPaste={onPasteFiles}
-                onDrop={onDropFiles}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (!dragOver) setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
+                onPaste={att.dropzone.onPaste}
+                onDrop={att.dropzone.onDrop}
+                onDragOver={att.dropzone.onDragOver}
+                onDragLeave={att.dropzone.onDragLeave}
                 placeholder={t("detail.commentPh")}
                 className={cn(
                   "min-h-[72px] w-full resize-none rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-active-fg",
-                  dragOver && "border-active-fg ring-2 ring-active-fg/30",
+                  att.dragOver && "border-active-fg ring-2 ring-active-fg/30",
                 )}
               />
               <div className="mt-2 flex items-center justify-between">
                 <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
                   <Paperclip className="size-3.5" />
-                  {uploading ? t("detail.uploading") : t("detail.attach")}
+                  {att.uploading ? t("detail.uploading") : t("detail.attach")}
                   <input
                     type="file"
                     multiple
                     className="hidden"
                     onChange={(e) => {
-                      void onPickFiles(e.target.files);
+                      void att.pickFiles(e.target.files);
                       e.target.value = "";
                     }}
                   />
@@ -543,9 +436,9 @@ export function IssueDetailView() {
                 <Button
                   size="sm"
                   disabled={
-                    (!comment.trim() && pending.length === 0) ||
+                    (!comment.trim() && att.pending.length === 0) ||
                     posting ||
-                    uploading
+                    att.uploading
                   }
                   onClick={postComment}
                   className="bg-[#2563eb] text-white hover:bg-[#2563eb]/90"
@@ -688,14 +581,6 @@ export function IssueDetailView() {
           onClose={() => setOpenDiffTaskId(null)}
         />
       </Suspense>
-    )}
-    {pendingLightbox != null && pendingImages[pendingLightbox] && (
-      <ImageLightbox
-        images={pendingImages}
-        index={pendingLightbox}
-        onIndex={setPendingLightbox}
-        onClose={() => setPendingLightbox(null)}
-      />
     )}
     </>
   );
