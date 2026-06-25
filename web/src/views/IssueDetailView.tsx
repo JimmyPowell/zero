@@ -1,6 +1,14 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Paperclip, X, FolderKanban, ChevronDown } from "lucide-react";
+import {
+  ArrowLeft,
+  Paperclip,
+  X,
+  FolderKanban,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+} from "lucide-react";
 
 import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
@@ -33,8 +41,8 @@ import {
 } from "@/components/issue/ImageLightbox";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { issuesActions } from "@/lib/issues-store";
-import { issueKey } from "@/lib/issue-meta";
+import { issuesActions, useIssues, filterByProject } from "@/lib/issues-store";
+import { issueKey, statusMeta } from "@/lib/issue-meta";
 import { relativeTime } from "@/lib/time";
 import {
   api,
@@ -87,6 +95,8 @@ export function IssueDetailView() {
   const { currentWorkspace } = useAuth();
   const wsId = currentWorkspace?.id ?? null;
   const mainRef = useRef<HTMLElement>(null);
+  // 列表（沿用需求页的项目筛选上下文），用于上一条/下一条需求导航
+  const { issues, projectFilter } = useIssues();
 
   const [issue, setIssue] = useState<IssueDetail | null>(null);
   const [events, setEvents] = useState<IssueEvent[]>([]);
@@ -104,6 +114,21 @@ export function IssueDetailView() {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pendingLightbox, setPendingLightbox] = useState<number | null>(null);
+
+  // 上一条 / 下一条需求：在「按当前项目筛选后的列表」里定位本 issue 的邻居
+  const navList = filterByProject(issues, projectFilter);
+  const navIdx = issue ? navList.findIndex((i) => i.id === issue.id) : -1;
+  const prevIssue = navIdx > 0 ? navList[navIdx - 1] : null;
+  const nextIssue =
+    navIdx >= 0 && navIdx < navList.length - 1 ? navList[navIdx + 1] : null;
+
+  // 返回上一级：有浏览历史就回退，否则兜底回需求列表（深链直达时也稳）
+  function goBack() {
+    if (window.history.length > 1) navigate(-1);
+    else navigate("/requirements");
+  }
+  const goPrev = () => prevIssue && navigate(`/issues/${prevIssue.id}`);
+  const goNext = () => nextIssue && navigate(`/issues/${nextIssue.id}`);
 
   useEffect(() => {
     if (!wsId || !id) return;
@@ -159,6 +184,55 @@ export function IssueDetailView() {
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId, id, hasActiveRun]);
+
+  // 深链直达详情（没先逛过列表）时补拉需求列表，让上/下一条可用
+  useEffect(() => {
+    if (wsId && issues.length === 0) void issuesActions.load(wsId);
+  }, [wsId, issues.length]);
+
+  // 键盘：Esc 返回上一级，[ / ] 切上一条 / 下一条需求；在输入框/文本域内不拦截
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable)
+      )
+        return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        goBack();
+      } else if (e.key === "[" && prevIssue) {
+        e.preventDefault();
+        navigate(`/issues/${prevIssue.id}`);
+      } else if (e.key === "]" && nextIssue) {
+        e.preventDefault();
+        navigate(`/issues/${nextIssue.id}`);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate, prevIssue?.id, nextIssue?.id]);
+
+  // 进入需求默认落到底部（最新一条消息）；每个 issue 仅自动跳一次，避免轮询刷新时打断阅读
+  const scrolledForId = useRef<string | null>(null);
+  useEffect(() => {
+    if (status !== "ready" || !id) return;
+    if (scrolledForId.current === id) return;
+    scrolledForId.current = id;
+    const el = mainRef.current;
+    if (!el) return;
+    // 等时间线渲染完成再跳，双 rAF 兜住首帧布局
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      }),
+    );
+  }, [status, id]);
 
   async function patch(payload: UpdateIssuePayload) {
     if (!wsId || !issue) return;
@@ -263,6 +337,7 @@ export function IssueDetailView() {
 
   const runsById = Object.fromEntries(runs.map((r) => [r.taskId, r]));
   const openRun = openRunId ? runsById[openRunId] : null;
+  const StatusIcon = statusMeta[issue.status].Icon;
 
   // 待发图片附件（用于 chip 缩略图 + 灯箱左右切换）；按 id 定位，避免同名误开
   const pendingImageAtts = pending.filter((p) => p.mime.startsWith("image/"));
@@ -278,27 +353,65 @@ export function IssueDetailView() {
         {/* 主区：标题 / 描述 / 时间线 / 评论 —— 仅此处随内容滚动 */}
         <main
           ref={mainRef}
-          className="flex min-w-0 flex-1 flex-col overflow-y-auto px-8 py-6"
+          className="flex min-w-0 flex-1 flex-col overflow-y-auto"
         >
-          <div className="mx-auto w-full max-w-[760px]">
-            {/* 顶部：返回 + 编号 */}
-            <div className="mb-5 flex items-center gap-2 text-sm text-muted-foreground">
+          {/* 吸顶面包屑：返回 · 需求›编号 · 状态 · 标题 · 上/下一条 —— 滚到哪都在 */}
+          <div className="sticky top-0 z-10 border-b border-border bg-background/85 px-8 backdrop-blur-sm">
+            <div className="mx-auto flex h-12 w-full max-w-[760px] items-center gap-2 text-sm">
               <button
                 type="button"
-                onClick={() => navigate(-1)}
-                className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent hover:text-foreground"
+                onClick={goBack}
+                title={t("detail.backHint")}
+                className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
               >
                 <ArrowLeft className="size-4" />
-                {t("detail.back")}
+                <span className="hidden sm:inline">{t("detail.back")}</span>
               </button>
-              <span className="shrink-0 font-mono text-xs">
+              <button
+                type="button"
+                onClick={() => navigate("/requirements")}
+                className="shrink-0 rounded px-1 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {t("detail.crumbRequirements")}
+              </button>
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 {issueKey(issue.number)}
               </span>
-              <span className="min-w-0 flex-1 truncate text-foreground">
+              <StatusIcon
+                className={cn(
+                  "size-4 shrink-0",
+                  statusMeta[issue.status].className,
+                )}
+              />
+              <span className="min-w-0 flex-1 truncate font-medium text-foreground">
                 {issue.title}
               </span>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={goPrev}
+                  disabled={!prevIssue}
+                  title={t("detail.prevIssue")}
+                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                >
+                  <ChevronUp className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={goNext}
+                  disabled={!nextIssue}
+                  title={t("detail.nextIssue")}
+                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                >
+                  <ChevronDown className="size-4" />
+                </button>
+              </div>
             </div>
+          </div>
 
+          <div className="px-8 py-6">
+            <div className="mx-auto w-full max-w-[760px]">
             <input
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
@@ -437,6 +550,7 @@ export function IssueDetailView() {
                   {posting ? t("detail.posting") : t("detail.send")}
                 </Button>
               </div>
+            </div>
             </div>
           </div>
           <ScrollNav scrollRef={mainRef} />

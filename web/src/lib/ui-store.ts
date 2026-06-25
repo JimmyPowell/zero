@@ -107,6 +107,10 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // 详情页 / 时间线
     "detail.back": "返回",
+    "detail.backHint": "返回（Esc）",
+    "detail.crumbRequirements": "需求",
+    "detail.prevIssue": "上一条需求（[ 键）",
+    "detail.nextIssue": "下一条需求（] 键）",
     "detail.notFound": "需求不存在或已被删除",
     "detail.descPh": "添加描述…（支持 Markdown）",
     "detail.descExpand": "展开全部",
@@ -543,6 +547,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "priority.none": "None",
 
     "detail.back": "Back",
+    "detail.backHint": "Back (Esc)",
+    "detail.crumbRequirements": "Issues",
+    "detail.prevIssue": "Previous issue ([)",
+    "detail.nextIssue": "Next issue (])",
     "detail.notFound": "Issue not found or deleted",
     "detail.descPh": "Add a description… (Markdown supported)",
     "detail.descExpand": "Show more",
