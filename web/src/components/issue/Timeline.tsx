@@ -217,6 +217,8 @@ export const Timeline = memo(function Timeline({
   canModerate,
   onDeleteComment,
   onRestoreComment,
+  hasMore = false,
+  onLoadEarlier,
 }: {
   events: IssueEvent[];
   runs?: Record<string, RunSummary>;
@@ -226,6 +228,9 @@ export const Timeline = memo(function Timeline({
   canModerate?: boolean;
   onDeleteComment?: (eventId: string) => void;
   onRestoreComment?: (eventId: string) => void;
+  // 窗口化：events 只是「尾部可见窗口」，hasMore 表示上面还有更早历史，点按钮再渲染一批
+  hasMore?: boolean;
+  onLoadEarlier?: () => void;
 }) {
   const { t, locale } = useUi();
 
@@ -266,6 +271,17 @@ export const Timeline = memo(function Timeline({
   return (
     <>
     <ol className="flex flex-col">
+      {hasMore && (
+        <li className="flex justify-center py-2">
+          <button
+            type="button"
+            onClick={onLoadEarlier}
+            className="rounded-full border border-border bg-card px-3.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+          >
+            {t("timeline.loadEarlier")}
+          </button>
+        </li>
+      )}
       {events.map((ev) => {
         const actorName = ev.actor?.name ?? t("timeline.system");
         const time = relativeTime(ev.createdAt, locale);
