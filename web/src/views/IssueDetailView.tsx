@@ -1,8 +1,15 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
-  Paperclip,
   FolderKanban,
   ChevronDown,
   ChevronUp,
@@ -36,10 +43,7 @@ const DiffOverlay = lazy(() =>
   })),
 );
 import { DescriptionField } from "@/components/issue/DescriptionField";
-import {
-  useAttachmentComposer,
-  PendingAttachments,
-} from "@/components/issue/AttachmentComposer";
+import { CommentComposer } from "@/components/issue/CommentComposer";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
 import { toast } from "@/lib/toast-store";
@@ -105,10 +109,6 @@ export function IssueDetailView() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [editTitle, setEditTitle] = useState("");
-  const [comment, setComment] = useState("");
-  const [posting, setPosting] = useState(false);
-  // 评论框附件编排（粘贴/拖拽/选文件 → 即传 → 待发；发评论时带 id）
-  const att = useAttachmentComposer(wsId);
 
   // 上一条 / 下一条需求：在「按当前项目筛选后的列表」里定位本 issue 的邻居
   const navList = filterByProject(issues, projectFilter);
@@ -152,26 +152,49 @@ export function IssueDetailView() {
     }
   }
 
+  // 刷新时间线 + 运行摘要（useCallback 稳定引用，供 Timeline memo / 轮询 / 子组件复用）
+  const refresh = useCallback(async () => {
+    if (!wsId || !id) return;
+    try {
+      const [e, r] = await Promise.all([
+        api.listEvents(wsId, id),
+        api.listRuns(wsId, id),
+      ]);
+      setEvents(e.events);
+      setRuns(r.runs);
+    } catch {
+      /* 忽略瞬时错误，下个轮询周期再试 */
+    }
+  }, [wsId, id]);
+
   // 删除评论：不弹确认（时间线就地保留「已删除 + 恢复」占位，本身就是后悔药）
-  async function deleteComment(eventId: string) {
-    if (!wsId || !issue) return;
-    try {
-      await api.deleteComment(wsId, issue.id, eventId);
-      await refresh();
-      toast.success({ title: t("toast.commentDeleted") });
-    } catch {
-      toast.error({ title: t("toast.issueDeleteFailed") });
-    }
-  }
-  async function restoreComment(eventId: string) {
-    if (!wsId || !issue) return;
-    try {
-      await api.restoreComment(wsId, issue.id, eventId);
-      await refresh();
-    } catch {
-      toast.error({ title: t("toast.issueDeleteFailed") });
-    }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const deleteComment = useCallback(
+    async (eventId: string) => {
+      if (!wsId || !issue) return;
+      try {
+        await api.deleteComment(wsId, issue.id, eventId);
+        await refresh();
+        toast.success({ title: t("toast.commentDeleted") });
+      } catch {
+        toast.error({ title: t("toast.issueDeleteFailed") });
+      }
+    },
+    [wsId, issue?.id, refresh],
+  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const restoreComment = useCallback(
+    async (eventId: string) => {
+      if (!wsId || !issue) return;
+      try {
+        await api.restoreComment(wsId, issue.id, eventId);
+        await refresh();
+      } catch {
+        toast.error({ title: t("toast.issueDeleteFailed") });
+      }
+    },
+    [wsId, issue?.id, refresh],
+  );
 
   useEffect(() => {
     if (!wsId || !id) return;
@@ -204,21 +227,6 @@ export function IssueDetailView() {
       alive = false;
     };
   }, [wsId, id]);
-
-  // 刷新时间线 + 运行摘要
-  async function refresh() {
-    if (!wsId || !id) return;
-    try {
-      const [e, r] = await Promise.all([
-        api.listEvents(wsId, id),
-        api.listRuns(wsId, id),
-      ]);
-      setEvents(e.events);
-      setRuns(r.runs);
-    } catch {
-      /* 忽略瞬时错误，下个轮询周期再试 */
-    }
-  }
 
   // 有运行处于活动态时轮询，让时间线/运行卡片实时跟进（细粒度走浮层 SSE）
   const hasActiveRun = runs.some(
@@ -298,27 +306,25 @@ export function IssueDetailView() {
     }
   }
 
-  async function postComment() {
-    const body = comment.trim();
-    if ((!body && att.pending.length === 0) || !wsId || !issue || posting)
-      return;
-    setPosting(true);
-    try {
-      const { event } = await api.addComment(
-        wsId,
-        issue.id,
-        body,
-        att.pending.map((p) => p.id),
-      );
+  // 评论发送成功后：追加新事件 + 刷新（拉运行卡片 / 启动轮询）。useCallback 稳引用给子组件。
+  const onPosted = useCallback(
+    (event: IssueEvent) => {
       setEvents((prev) => [...prev, event]);
-      setComment("");
-      att.reset();
-      // 评论可能触发了 agent 执行 → 拉取最新运行卡片（并启动轮询）
-      await refresh();
-    } finally {
-      setPosting(false);
-    }
-  }
+      return refresh();
+    },
+    [refresh],
+  );
+
+  // 运行卡片索引 + 打开回调：useMemo/useCallback 稳定引用，让 Timeline 的 memo 生效
+  const runsById = useMemo(
+    () => Object.fromEntries(runs.map((r) => [r.taskId, r])),
+    [runs],
+  );
+  const onOpenRun = useCallback((taskId: string) => setOpenRunId(taskId), []);
+  const onOpenDiff = useCallback(
+    (taskId: string) => setOpenDiffTaskId(taskId),
+    [],
+  );
 
   if (status === "loading") {
     return (
@@ -350,7 +356,6 @@ export function IssueDetailView() {
     );
   }
 
-  const runsById = Object.fromEntries(runs.map((r) => [r.taskId, r]));
   const openRun = openRunId ? runsById[openRunId] : null;
   const StatusIcon = statusMeta[issue.status].Icon;
 
@@ -461,66 +466,20 @@ export function IssueDetailView() {
             <Timeline
               events={events}
               runs={runsById}
-              onOpenRun={(taskId) => setOpenRunId(taskId)}
-              onOpenDiff={(taskId) => setOpenDiffTaskId(taskId)}
+              onOpenRun={onOpenRun}
+              onOpenDiff={onOpenDiff}
               currentUserId={user?.id ?? null}
               canModerate={canModerate}
               onDeleteComment={deleteComment}
               onRestoreComment={restoreComment}
             />
 
-            {/* 评论输入 */}
-            <div className="mt-4">
-              {/* 待发附件：图片显缩略图（点开灯箱），其它显文件 chip */}
-              <PendingAttachments
-                pending={att.pending}
-                onRemove={att.removeOne}
-              />
-              <textarea
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter")
-                    void postComment();
-                }}
-                onPaste={att.dropzone.onPaste}
-                onDrop={att.dropzone.onDrop}
-                onDragOver={att.dropzone.onDragOver}
-                onDragLeave={att.dropzone.onDragLeave}
-                placeholder={t("detail.commentPh")}
-                className={cn(
-                  "min-h-[72px] w-full resize-none rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-active-fg",
-                  att.dragOver && "border-active-fg ring-2 ring-active-fg/30",
-                )}
-              />
-              <div className="mt-2 flex items-center justify-between">
-                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
-                  <Paperclip className="size-3.5" />
-                  {att.uploading ? t("detail.uploading") : t("detail.attach")}
-                  <input
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      void att.pickFiles(e.target.files);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                <Button
-                  size="sm"
-                  disabled={
-                    (!comment.trim() && att.pending.length === 0) ||
-                    posting ||
-                    att.uploading
-                  }
-                  onClick={postComment}
-                  className="bg-[#2563eb] text-white hover:bg-[#2563eb]/90"
-                >
-                  {posting ? t("detail.posting") : t("detail.send")}
-                </Button>
-              </div>
-            </div>
+            {/* 评论输入：独立组件，打字只重渲染它自己，不触动时间线（性能） */}
+            <CommentComposer
+              wsId={wsId}
+              issueId={issue.id}
+              onPosted={onPosted}
+            />
             </div>
           </div>
           <ScrollNav scrollRef={mainRef} />

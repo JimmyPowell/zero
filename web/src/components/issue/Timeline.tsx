@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   ChevronRight,
   Paperclip,
@@ -206,7 +206,9 @@ function DiffCard({
   );
 }
 
-export function Timeline({
+// memo 化：父组件（详情页）因其它 state 变化重渲染时，只要传入 props 引用不变就跳过整段时间线重渲染。
+// 需配合父组件用 useMemo/useCallback 稳定 runs / 回调 等引用，详见 IssueDetailView。
+export const Timeline = memo(function Timeline({
   events,
   runs = {},
   onOpenRun,
@@ -470,4 +472,4 @@ export function Timeline({
     )}
     </>
   );
-}
+});

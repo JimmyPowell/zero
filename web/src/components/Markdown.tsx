@@ -1,10 +1,13 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { cn } from "@/lib/utils";
 
-/** 评论/正文的 Markdown 渲染（GFM：表格、任务列表、删除线等） */
-export function Markdown({
+/** 评论/正文的 Markdown 渲染（GFM：表格、任务列表、删除线等）。
+ *  memo 化：children(内容)/className 不变就不重渲染——长历史里时间线整体重渲染时，
+ *  省掉成片 markdown 的重复解析(remark→hast→React)，是评论页卡顿的主要来源之一。 */
+export const Markdown = memo(function Markdown({
   children,
   className,
 }: {
@@ -37,4 +40,4 @@ export function Markdown({
       </ReactMarkdown>
     </div>
   );
-}
+});
