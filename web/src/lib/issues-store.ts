@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
-import { api, ApiError, type Issue } from "./api-client";
+import { api, ApiError, type Issue, type IssuePriority } from "./api-client";
+import type { IssueSort } from "./ui-store";
 
 interface IssuesState {
   workspaceId: string | null;
@@ -30,6 +31,42 @@ export function filterByProject(
   if (projectFilter == null) return issues;
   if (projectFilter === NO_PROJECT) return issues.filter((i) => i.project == null);
   return issues.filter((i) => i.project?.id === projectFilter);
+}
+
+const PRIORITY_RANK: Record<IssuePriority, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  none: 4,
+};
+
+// 按所选规则排序（纯函数，不改原数组；列表/看板共用）。
+// activity/priority/unread 的"同组内"再按最新活动倒序兜底，保证稳定且符合直觉。
+export function sortIssues(issues: Issue[], sort: IssueSort): Issue[] {
+  const t = (iso: string) => new Date(iso).getTime();
+  const byActivity = (a: Issue, b: Issue) =>
+    t(b.lastActivityAt) - t(a.lastActivityAt);
+  const arr = [...issues];
+  switch (sort) {
+    case "created_desc":
+      return arr.sort((a, b) => t(b.createdAt) - t(a.createdAt));
+    case "created_asc":
+      return arr.sort((a, b) => t(a.createdAt) - t(b.createdAt));
+    case "priority":
+      return arr.sort(
+        (a, b) =>
+          PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+          byActivity(a, b),
+      );
+    case "unread":
+      return arr.sort(
+        (a, b) => Number(!!b.unread) - Number(!!a.unread) || byActivity(a, b),
+      );
+    case "activity":
+    default:
+      return arr.sort(byActivity);
+  }
 }
 
 const listeners = new Set<() => void>();
@@ -103,6 +140,19 @@ function setProjectFilter(projectId: string | null) {
   emit();
 }
 
+// 详情页打开后把该需求本地标为已读，回到列表立即清掉未读标记（服务端水位已在详情页 upsert）
+function markRead(issueId: string) {
+  let changed = false;
+  state.issues = state.issues.map((i) => {
+    if (i.id === issueId && i.unread) {
+      changed = true;
+      return { ...i, unread: false };
+    }
+    return i;
+  });
+  if (changed) emit();
+}
+
 export const issuesActions = {
   load,
   refresh: () => {
@@ -112,6 +162,7 @@ export const issuesActions = {
   replace,
   remove,
   setProjectFilter,
+  markRead,
 };
 
 export function useIssues() {

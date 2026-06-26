@@ -34,7 +34,22 @@ export function IssueRow({
         <SIcon className={cn("size-4", sm.className)} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm text-foreground">{issue.title}</span>
+        <span className="flex items-center gap-1.5">
+          {issue.unread && (
+            <span
+              title={t("issue.unread")}
+              className="size-1.5 shrink-0 rounded-full bg-[#2563eb]"
+            />
+          )}
+          <span
+            className={cn(
+              "truncate text-sm text-foreground",
+              issue.unread && "font-semibold",
+            )}
+          >
+            {issue.title}
+          </span>
+        </span>
         {issue.lastMessage && (
           <span
             title={issue.lastMessage}

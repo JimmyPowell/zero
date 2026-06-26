@@ -112,6 +112,8 @@ export interface Issue {
   // 「我发给 agent 的最新一条评论」摘要（已折叠空白/限长），无则为 null
   lastMessage: string | null;
   updatedAt: string;
+  // 未读：自我上次看过该需求后，有他人/agent/系统的新活动（列表接口计算，详情接口无此字段）
+  unread?: boolean;
 }
 
 export interface CreateIssuePayload {
@@ -715,6 +717,13 @@ export const api = {
   restoreIssue: (workspaceId: string, id: string) =>
     request<{ issue: IssueDetail }>(
       `/workspaces/${workspaceId}/issues/${id}/restore`,
+      { method: "POST", body: {} },
+    ),
+
+  // 标记需求为已读（进详情页时调用）：更新当前用户对该需求的已读水位
+  markIssueRead: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/issues/${id}/read`,
       { method: "POST", body: {} },
     ),
 

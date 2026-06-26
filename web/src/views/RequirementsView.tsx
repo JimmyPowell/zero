@@ -6,14 +6,15 @@ import { Button } from "@/components/ui/button";
 import { IssueRow } from "@/components/issue/IssueRow";
 import { RequirementsBoard } from "@/components/issue/RequirementsBoard";
 import { ProjectFilter } from "@/components/issue/ProjectFilter";
+import { SortFilter } from "@/components/issue/SortFilter";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { useIssues, filterByProject } from "@/lib/issues-store";
+import { useIssues, filterByProject, sortIssues } from "@/lib/issues-store";
 import type { LayoutContext } from "@/components/Layout";
 
 export function RequirementsView() {
-  const { t, viewMode, setViewMode } = useUi();
+  const { t, viewMode, setViewMode, issueSort } = useUi();
   const navigate = useNavigate();
   const { workspaces, currentWorkspace } = useAuth();
   const { openCreateWorkspace, openCreateIssue } =
@@ -21,7 +22,7 @@ export function RequirementsView() {
   const { status, issues, error, load, projectFilter } = useIssues();
 
   const wsId = currentWorkspace?.id ?? null;
-  const filtered = filterByProject(issues, projectFilter);
+  const filtered = sortIssues(filterByProject(issues, projectFilter), issueSort);
 
   // 没有任何工作空间 → 引导创建
   if (workspaces.length === 0) {
@@ -56,6 +57,8 @@ export function RequirementsView() {
         <div className="flex items-center gap-2">
           {/* 按项目筛选（选择存 issues-store，列表/看板共用） */}
           {wsId && <ProjectFilter workspaceId={wsId} />}
+          {/* 排序（选择存 ui-store/localStorage，列表/看板共用） */}
+          <SortFilter />
           {/* 列表 / 看板 切换（选择持久化在 ui-store） */}
           <div className="flex items-center rounded-lg border border-border p-0.5">
             <button

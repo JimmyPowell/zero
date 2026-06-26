@@ -3,6 +3,13 @@ import { useSyncExternalStore } from "react";
 export type Theme = "light" | "dark" | "system";
 export type Locale = "zh" | "en";
 export type ViewMode = "list" | "board";
+// 需求列表排序：最新活动 / 创建新→旧 / 创建旧→新 / 优先级 / 未读优先
+export type IssueSort =
+  | "activity"
+  | "created_desc"
+  | "created_asc"
+  | "priority"
+  | "unread";
 
 const messages: Record<Locale, Record<string, string>> = {
   zh: {
@@ -23,6 +30,13 @@ const messages: Record<Locale, Record<string, string>> = {
     "menu.group.platform": "平台",
     "view.list": "列表",
     "view.board": "看板",
+    "sort.label": "排序",
+    "sort.activity": "最新活动",
+    "sort.created_desc": "创建（新→旧）",
+    "sort.created_asc": "创建（旧→新）",
+    "sort.priority": "优先级",
+    "sort.unread": "未读优先",
+    "issue.unread": "未读",
     "workspace.placeholder": "主工作区（占位）",
     collapse: "收起侧边栏",
     expand: "展开侧边栏",
@@ -513,6 +527,13 @@ const messages: Record<Locale, Record<string, string>> = {
     "menu.group.platform": "Platform",
     "view.list": "List",
     "view.board": "Board",
+    "sort.label": "Sort",
+    "sort.activity": "Latest activity",
+    "sort.created_desc": "Created (newest)",
+    "sort.created_asc": "Created (oldest)",
+    "sort.priority": "Priority",
+    "sort.unread": "Unread first",
+    "issue.unread": "Unread",
     "workspace.placeholder": "Main workspace (placeholder)",
     collapse: "Collapse sidebar",
     expand: "Expand sidebar",
@@ -992,12 +1013,24 @@ function readViewMode(): ViewMode {
   return v === "board" ? "board" : "list";
 }
 
+function readIssueSort(): IssueSort {
+  const v = localStorage.getItem("zero-issue-sort");
+  return v === "activity" ||
+    v === "created_desc" ||
+    v === "created_asc" ||
+    v === "priority" ||
+    v === "unread"
+    ? v
+    : "activity"; // 默认按「最新活动」——多需求并行推进时最实用
+}
+
 const mql = window.matchMedia("(prefers-color-scheme: dark)");
 
 const state = {
   theme: readTheme(),
   locale: readLocale(),
   viewMode: readViewMode(),
+  issueSort: readIssueSort(),
   systemDark: mql.matches,
 };
 
@@ -1053,11 +1086,18 @@ export function setViewMode(mode: ViewMode): void {
   emit();
 }
 
+export function setIssueSort(sort: IssueSort): void {
+  state.issueSort = sort;
+  localStorage.setItem("zero-issue-sort", sort);
+  emit();
+}
+
 export function useUi() {
   // 任一字段变化即触发重渲染；快照用拼接字符串保证引用稳定
   const snapshot = useSyncExternalStore(
     subscribe,
-    () => `${state.theme}|${state.locale}|${state.viewMode}|${state.systemDark}`,
+    () =>
+      `${state.theme}|${state.locale}|${state.viewMode}|${state.issueSort}|${state.systemDark}`,
   );
   void snapshot;
 
@@ -1067,10 +1107,12 @@ export function useUi() {
     theme: state.theme,
     locale: state.locale,
     viewMode: state.viewMode,
+    issueSort: state.issueSort,
     isDark: resolvedDark(),
     setTheme,
     setLocale,
     setViewMode,
+    setIssueSort,
     t,
   };
 }

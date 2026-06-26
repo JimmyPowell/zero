@@ -296,6 +296,36 @@ async function canManage(
   return m?.role === "owner" || m?.role === "admin";
 }
 
+// 在给定 issue 集合里挑出「对当前用户为未读」的 id：存在一条未删除、且不是我自己发的
+// 事件，其时间晚于我对该 issue 的 last_read_at（从未读过 → 视为很久以前，任何他人活动即未读）。
+async function unreadIssueIds(
+  userId: string,
+  ids: string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await db
+    .selectDistinct({ issueId: schema.issueEvent.issueId })
+    .from(schema.issueEvent)
+    .leftJoin(
+      schema.issueRead,
+      and(
+        eq(schema.issueRead.issueId, schema.issueEvent.issueId),
+        eq(schema.issueRead.userId, userId),
+      ),
+    )
+    .where(
+      and(
+        inArray(schema.issueEvent.issueId, ids),
+        isNull(schema.issueEvent.deletedAt),
+        // 我自己（成员）发的不算「新消息」
+        sql`NOT (${schema.issueEvent.actorType} = 'member' AND ${schema.issueEvent.actorId} = ${userId})`,
+        // 晚于我的已读水位（从未读过则 last_read_at 为 NULL → 用 1970 兜底 = 全算未读）
+        sql`${schema.issueEvent.createdAt} > COALESCE(${schema.issueRead.lastReadAt}, '1970-01-01')`,
+      ),
+    );
+  return new Set(rows.map((r) => r.issueId));
+}
+
 export const issueRoutes = new Hono<WorkspaceEnv>()
   .use(requireAuth)
   .use(requireWorkspaceMember)
@@ -330,7 +360,13 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         .where(and(...filters))
         .orderBy(desc(schema.issue.createdAt))
         .limit(200);
-      return c.json({ issues: rows.map(shape) });
+      const unread = await unreadIssueIds(
+        sub,
+        rows.map((r) => r.id),
+      );
+      return c.json({
+        issues: rows.map((r) => ({ ...shape(r), unread: unread.has(r.id) })),
+      });
     },
   )
   // 搜索
@@ -339,6 +375,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     zValidator("query", z.object({ q: z.string().trim().min(1) })),
     async (c) => {
       const workspaceId = c.get("workspaceId");
+      const { sub } = c.get("user");
       const { q } = c.req.valid("query");
       const kw = `%${q}%`;
       const rows = await baseIssueQuery()
@@ -351,7 +388,13 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         )
         .orderBy(desc(schema.issue.createdAt))
         .limit(20);
-      return c.json({ issues: rows.map(shape) });
+      const unread = await unreadIssueIds(
+        sub,
+        rows.map((r) => r.id),
+      );
+      return c.json({
+        issues: rows.map((r) => ({ ...shape(r), unread: unread.has(r.id) })),
+      });
     },
   )
   // 回收站：本工作空间内已软删的需求（admin/owner 看全部，普通成员只看自己创建的）
@@ -700,6 +743,22 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       .where(eq(schema.issue.id, id))
       .limit(1);
     return c.json({ issue: shapeDetail(row!) });
+  })
+  // 标记需求已读：进详情页时调用，upsert 当前用户对该 issue 的已读水位到 now(3)。
+  .post("/:id/read", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const { sub } = c.get("user");
+    const id = c.req.param("id");
+    await db
+      .insert(schema.issueRead)
+      .values({
+        userId: sub,
+        issueId: id,
+        workspaceId,
+        lastReadAt: sql`now(3)`,
+      })
+      .onDuplicateKeyUpdate({ set: { lastReadAt: sql`now(3)` } });
+    return c.json({ ok: true });
   })
   // 时间线：事件流（评论 + 变更，按时间正序）
   .get("/:id/events", async (c) => {
