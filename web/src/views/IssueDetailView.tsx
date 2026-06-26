@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -86,6 +87,20 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// 时间线首屏只渲染最近 N 条：长历史里成百条评论各跑一次 react-markdown 解析（remark→hast→React），
+// 一次性同步渲染会占死主线程几百毫秒~1 秒，表现为「进来几秒滚动卡死」。进入即自动滚到底、
+// 用户起点就是最新消息，更早的历史按需「加载更早」逐批补渲染。
+const TIMELINE_TAIL = 40;
+const TIMELINE_STEP = 40;
+
+// 事件列表轻量签名：长度 + 末条 id + 软删条数。轮询（有活动 run 时每 3s）若签名未变就不 setEvents，
+// 避免每次都换新数组引用、打断 Timeline 的 memo 触发整表 reconcile。软删/恢复改变软删条数 → 签名变 → 照常更新。
+function eventsSig(evts: IssueEvent[]): string {
+  let del = 0;
+  for (const e of evts) if (e.deleted) del++;
+  return `${evts.length}:${evts[evts.length - 1]?.id ?? ""}:${del}`;
+}
+
 export function IssueDetailView() {
   const { t, locale } = useUi();
   const { id } = useParams<{ id: string }>();
@@ -109,6 +124,8 @@ export function IssueDetailView() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [editTitle, setEditTitle] = useState("");
+  // 时间线可见窗口大小（尾部 N 条），「加载更早」每次 +TIMELINE_STEP；切 issue 时重置
+  const [visibleCount, setVisibleCount] = useState(TIMELINE_TAIL);
 
   // 上一条 / 下一条需求：在「按当前项目筛选后的列表」里定位本 issue 的邻居
   const navList = filterByProject(issues, projectFilter);
@@ -160,7 +177,10 @@ export function IssueDetailView() {
         api.listEvents(wsId, id),
         api.listRuns(wsId, id),
       ]);
-      setEvents(e.events);
+      // 签名未变（轮询拿到同一批事件）就保持旧引用，让 Timeline 的 memo 跳过整表重渲染
+      setEvents((prev) =>
+        eventsSig(prev) === eventsSig(e.events) ? prev : e.events,
+      );
       setRuns(r.runs);
     } catch {
       /* 忽略瞬时错误，下个轮询周期再试 */
@@ -200,6 +220,7 @@ export function IssueDetailView() {
     if (!wsId || !id) return;
     let alive = true;
     setStatus("loading");
+    setVisibleCount(TIMELINE_TAIL); // 切到另一条需求时，时间线窗口回到「只看最新一批」
     Promise.all([
       api.getIssue(wsId, id),
       api.listEvents(wsId, id),
@@ -326,6 +347,29 @@ export function IssueDetailView() {
     [],
   );
 
+  // 时间线只渲染尾部窗口（最近 visibleCount 条）；上面还有更早历史时给 Timeline 一个「加载更早」入口
+  const visibleEvents = useMemo(
+    () =>
+      events.length > visibleCount ? events.slice(-visibleCount) : events,
+    [events, visibleCount],
+  );
+  const hasMoreHistory = events.length > visibleEvents.length;
+  // 「加载更早」会在列表顶部插入更早的条目，把内容往下顶 → 视口会跳。先记下「距底距离」，
+  // 渲染后用 useLayoutEffect 还原 scrollTop，让用户当前看的位置纹丝不动。
+  const restoreBottomGap = useRef<number | null>(null);
+  const loadEarlier = useCallback(() => {
+    const el = mainRef.current;
+    restoreBottomGap.current = el ? el.scrollHeight - el.scrollTop : null;
+    setVisibleCount((c) => c + TIMELINE_STEP);
+  }, []);
+  useLayoutEffect(() => {
+    const el = mainRef.current;
+    if (el && restoreBottomGap.current != null) {
+      el.scrollTop = el.scrollHeight - restoreBottomGap.current;
+      restoreBottomGap.current = null;
+    }
+  }, [visibleCount]);
+
   if (status === "loading") {
     return (
       <Panel>
@@ -369,7 +413,7 @@ export function IssueDetailView() {
           className="flex min-w-0 flex-1 flex-col overflow-y-auto"
         >
           {/* 吸顶面包屑：返回 · 需求›编号 · 状态 · 标题 · 上/下一条 —— 滚到哪都在 */}
-          <div className="sticky top-0 z-10 border-b border-border bg-background/85 px-8 backdrop-blur-sm">
+          <div className="sticky top-0 z-10 border-b border-border bg-background px-8">
             <div className="mx-auto flex h-12 w-full max-w-[760px] items-center gap-2 text-sm">
               <button
                 type="button"
@@ -464,7 +508,7 @@ export function IssueDetailView() {
 
             <SectionLabel>{t("detail.activity")}</SectionLabel>
             <Timeline
-              events={events}
+              events={visibleEvents}
               runs={runsById}
               onOpenRun={onOpenRun}
               onOpenDiff={onOpenDiff}
@@ -472,6 +516,8 @@ export function IssueDetailView() {
               canModerate={canModerate}
               onDeleteComment={deleteComment}
               onRestoreComment={restoreComment}
+              hasMore={hasMoreHistory}
+              onLoadEarlier={loadEarlier}
             />
 
             {/* 评论输入：独立组件，打字只重渲染它自己，不触动时间线（性能） */}

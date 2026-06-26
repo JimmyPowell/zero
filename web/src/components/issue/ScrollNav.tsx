@@ -28,13 +28,24 @@ export function ScrollNav({
       setAtTop(el.scrollTop <= 8);
       setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 8);
     };
+    // 用 rAF 把每个 scroll 事件合并到「每帧最多算一次」：原来每个滚动事件都读 scrollHeight/clientHeight
+    // （强制同步 reflow）+ 3 次 setState，快速滚动时是一笔持续开销，rAF 节流后顺滑很多。
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        update();
+      });
+    };
     update();
-    el.addEventListener("scroll", update, { passive: true });
+    el.addEventListener("scroll", onScroll, { passive: true });
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => {
-      el.removeEventListener("scroll", update);
+      el.removeEventListener("scroll", onScroll);
       ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
     };
   }, [scrollRef]);
 
@@ -100,7 +111,7 @@ export function ScrollNav({
   if (!show) return null;
 
   const btn =
-    "pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground shadow-md backdrop-blur transition-all hover:bg-card hover:text-foreground hover:shadow-lg disabled:pointer-events-none disabled:opacity-30";
+    "pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-md transition-all hover:bg-sidebar-accent hover:text-foreground hover:shadow-lg disabled:pointer-events-none disabled:opacity-30";
 
   return (
     <div className="pointer-events-none sticky bottom-0 z-20 h-0 self-stretch">
