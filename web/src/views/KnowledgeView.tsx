@@ -99,7 +99,7 @@ export function KnowledgeView() {
     setActivePath(d.path);
     setPath(d.path);
     setPinned(d.pinned);
-    setMode("edit");
+    setMode("preview");
     setDocLoading(true);
     try {
       const r = await api.getKbDoc(wsId, d.path);
