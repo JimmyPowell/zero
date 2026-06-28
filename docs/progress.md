@@ -2,6 +2,30 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-28 · 多 Provider 完善 P0：codex / opencode 接入 Zero 上下文 MCP（main c6ed227）🔌
+
+**缘起（调研）**：实跑探针 + 代码盘点确认 codex/opencode 是 `PROVIDERS` 里的「二等公民」——
+`mcp:false` 导致 `writeMcpConfig` 不给它们注入，于是 Zero 的 6 个上下文工具
+（`zero_older_comments / zero_prior_runs / zero_search_knowledge / zero_write_knowledge /
+zero_wake_me / zero_watch_pid`）全是 claude/codebuddy 独享，「按需回拉上下文 + 自我排程续跑 +
+团队知识库」对 codex/opencode 整条失效。两家原生都支持 MCP，只是注入路径不同。
+
+- **重构（`daemon/src/index.ts`，单文件）**：`writeMcpConfig` → provider 无关的中性描述 `buildZeroMcp`，
+  各 runner 转原生注入：claude/codebuddy 写 `.mcp.json` 经 `--mcp-config`（`writeClaudeMcpConfig`）；
+  **codex** 用 `-c mcp_servers.zero.*` 行内覆盖（`codexMcpArgs`，值用 JSON 字面量＝合法 TOML，不动用户
+  `~/.codex/config.toml`）；**opencode** 经 env `OPENCODE_CONFIG_CONTENT` 内联 JSON
+  （`opencodeMcpConfigContent`，键是 `mcp`、不落盘不泄令牌）。`PROVIDERS.codex/opencode` 的 `mcp` 置 true。
+  **`mcp-context.ts` 零改动**，多家共用同一 stdio server。这一步也把 `agent-extensibility.md §6` 的
+  `ProviderAdapter.writeMcpConfig` 接缝自然挤出来了。
+- **验证**：opencode 端到端实跑（deepseek，模型成功调用 `zero_prior_runs` 取回真实 run 数据）；
+  codex 经 `codex mcp list` 确认注入的 `zero` server 已 registered+enabled（live turn 受 chatgpt
+  后端 websocket 网络所阻——`wss://chatgpt.com/.../responses` connection reset，与本改动无关）。
+  daemon typecheck 通过。daemon 已带代理重启（pid 切换）。
+- **待续（已出方案）**：P1 修 bug（codex resume 子命令顺序、用量字段名 `cached_input_tokens` /
+  `reasoning_output_tokens`、opencode #26855 用量丢失）+ 时间线 usage/run_status 收尾；P2 适配器事件
+  覆盖（codex file_change/mcp_tool_call/web_search、opencode `--thinking`、effort 透传）；P3 技能跨
+  provider 物化（见 [provider-skills-mounting.md](./provider-skills-mounting.md)）。
+
 ## 2026-06-23 · 变更可视化 v2.1：捕获层敏感文件 denylist（分支 feat/diff-secret-denylist）🔒
 
 **缘起（实测暴露）**：v2 上线后拿 `$HOME` 当 workDir 自测，diff 卡片里冒出 `.claude.json`（`M +448 −448`）。
