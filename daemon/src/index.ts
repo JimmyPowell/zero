@@ -814,33 +814,75 @@ function startPicker() {
 }
 
 // 把服务端装配好的上下文拼成给 agent 的 prompt
-// 写本 issue 的 MCP 配置：注入 Zero 上下文 server，env 带服务端地址 / 运行时令牌 / issueId。
-// 路径按 issue 固定，每跑覆盖；0600 收口（含令牌）。返回配置文件路径供 --mcp-config。
-function writeMcpConfig(
+// Zero 上下文 MCP 的「中性描述」（provider 无关）：怎么起这个 stdio server + 带哪些 env（含运行时令牌）。
+// 各 provider 的 runner 据此转成自己的原生注入方式：
+//   claude/codebuddy → 写 .mcp.json 文件经 --mcp-config 传入（writeClaudeMcpConfig）
+//   codex            → -c mcp_servers.zero.* 行内覆盖（codexMcpArgs，不动用户 ~/.codex/config.toml）
+//   opencode         → OPENCODE_CONFIG_CONTENT 内联 JSON（opencodeMcpConfigContent，不落盘）
+// mcp-context.ts 本身零改动，多家共用同一个 stdio server。
+interface ZeroMcp {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+function buildZeroMcp(
   server: string,
   token: string,
   issueId: string,
   taskId: string,
-): string {
-  ensureDir(MCP_DIR);
+): ZeroMcp {
   const mcpServerPath = new URL("./mcp-context.ts", import.meta.url).pathname;
-  const cfg = {
-    mcpServers: {
-      zero: {
-        command: process.execPath, // bun 自身
-        args: [mcpServerPath],
-        env: {
-          ZERO_SERVER: server,
-          ZERO_TOKEN: token,
-          ZERO_ISSUE_ID: issueId,
-          ZERO_TASK_ID: taskId, // 自唤醒登记的 source_task（审计/溯源）
-        },
-      },
+  return {
+    command: process.execPath, // bun 自身
+    args: [mcpServerPath],
+    env: {
+      ZERO_SERVER: server,
+      ZERO_TOKEN: token,
+      ZERO_ISSUE_ID: issueId,
+      ZERO_TASK_ID: taskId, // 自唤醒登记的 source_task（审计/溯源）
     },
   };
+}
+
+// claude/codebuddy：写本 issue 的 .mcp.json（含令牌），0600 收口、按 issue 固定每跑覆盖；返回路径供 --mcp-config。
+function writeClaudeMcpConfig(mcp: ZeroMcp, issueId: string): string {
+  ensureDir(MCP_DIR);
+  const cfg = { mcpServers: { zero: mcp } };
   const path = join(MCP_DIR, `${issueId}.json`);
   writeFileSync(path, JSON.stringify(cfg), { mode: 0o600 });
   return path;
+}
+
+// codex：无 --mcp-config，配置走 [mcp_servers]。用 `-c` 行内覆盖等效注入（值用 JSON 字面量，
+// 同时是合法 TOML 标量/数组 → codex 解析口径两种都吃），不落盘、不污染用户全局 config.toml。
+function codexMcpArgs(mcp: ZeroMcp): string[] {
+  const j = (v: unknown) => JSON.stringify(v);
+  const args = [
+    "-c",
+    `mcp_servers.zero.command=${j(mcp.command)}`,
+    "-c",
+    `mcp_servers.zero.args=${j(mcp.args)}`,
+  ];
+  for (const [k, v] of Object.entries(mcp.env)) {
+    args.push("-c", `mcp_servers.zero.env.${k}=${j(v)}`);
+  }
+  return args;
+}
+
+// opencode：无 --mcp-config，经 env OPENCODE_CONFIG_CONTENT 传内联 JSON（不落盘、不把令牌写进磁盘）。
+// 注意 opencode 的键是 `mcp`（非 claude 的 mcpServers），local server 用 command(数组)+environment。
+function opencodeMcpConfigContent(mcp: ZeroMcp): string {
+  return JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    mcp: {
+      "zero-context": {
+        type: "local",
+        command: [mcp.command, ...mcp.args],
+        environment: mcp.env,
+        enabled: true,
+      },
+    },
+  });
 }
 
 // ---- 技能物化（C3）----
@@ -1118,7 +1160,8 @@ async function runClaudeLike(
     model?: string | null;
     effort?: string | null;
     sessionId?: string | null;
-    mcpConfig?: string;
+    mcp?: ZeroMcp;
+    issueId?: string;
     signal?: AbortSignal;
   },
   reporter: Reporter,
@@ -1148,7 +1191,8 @@ async function runClaudeLike(
   if (opts.effort) cmd.push("--effort", opts.effort);
   if (opts.sessionId) cmd.push("--resume", opts.sessionId);
   // §3.1 注入 Zero 上下文 MCP（按需回拉更深上下文）；skip-permissions 下工具免确认
-  if (opts.mcpConfig) cmd.push("--mcp-config", opts.mcpConfig);
+  if (opts.mcp)
+    cmd.push("--mcp-config", writeClaudeMcpConfig(opts.mcp, opts.issueId ?? "zero"));
 
   const proc = Bun.spawn({
     cmd,
@@ -1249,7 +1293,8 @@ type RunOpts = {
   // 推理强度：仅 Claude 系 runner 注入 `--effort`；其它 provider 忽略本字段。
   effort?: string | null;
   sessionId?: string | null;
-  mcpConfig?: string;
+  mcp?: ZeroMcp;
+  issueId?: string; // claude 写 .mcp.json 文件按 issue 命名用
   // 取消任务：abort 时杀掉 agent 子进程（Bun.spawn 原生支持 signal）
   signal?: AbortSignal;
 };
@@ -1292,6 +1337,8 @@ async function runCodex(
 ): Promise<RunResult> {
   const cmd = ["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox"];
   if (opts.model) cmd.push("-m", opts.model);
+  // 注入 Zero 上下文 MCP（codex 无 --mcp-config，走 -c mcp_servers.zero.* 行内覆盖）
+  if (opts.mcp) cmd.push(...codexMcpArgs(opts.mcp));
   if (opts.sessionId) cmd.push("resume", opts.sessionId);
   cmd.push(prompt);
 
@@ -1380,7 +1427,14 @@ async function runOpenCode(
     stdout: "pipe",
     stderr: "pipe",
     cwd,
-    env: { ...process.env, OPENCODE_PERMISSION: '{"*":"allow"}' },
+    env: {
+      ...process.env,
+      OPENCODE_PERMISSION: '{"*":"allow"}',
+      // 注入 Zero 上下文 MCP（opencode 无 --mcp-config，走 OPENCODE_CONFIG_CONTENT 内联）
+      ...(opts.mcp
+        ? { OPENCODE_CONFIG_CONTENT: opencodeMcpConfigContent(opts.mcp) }
+        : {}),
+    },
     signal: opts.signal, // 取消时杀子进程
   });
 
@@ -1533,12 +1587,12 @@ const PROVIDERS: Record<
   codex: {
     runner: runCodex,
     sessionInvalid: /thread|session|resume|not found/i,
-    mcp: false,
+    mcp: true,
   },
   opencode: {
     runner: runOpenCode,
     sessionInvalid: /session|not found/i,
-    mcp: false,
+    mcp: true,
   },
   // CodeBuddy（腾讯）是 Claude Code 衍生版：stream-json / 续接 / MCP 全同构，
   // 直接复用 claudeAdapter 与 runClaudeLike。网关在 www.codebuddy.ai，无需代理。
@@ -1640,9 +1694,10 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       provider === "claude_code" || provider === "codebuddy"
         ? (claim.agent?.effort ?? null)
         : null;
-    // MCP 仅 claude（按需回拉更深上下文）；codex/opencode 走 prompt 内推送的上下文
-    const mcpConfig = spec.mcp
-      ? writeMcpConfig(server, token, issueId, taskId)
+    // MCP 上下文（按需回拉更深上下文 / 自我续跑 / 团队知识库）：claude/codebuddy/codex/opencode 都注入；
+    // 各 runner 据 spec.mcp 用各自原生方式接入同一个 zero 上下文 server（kimi 暂不支持）。
+    const mcp = spec.mcp
+      ? buildZeroMcp(server, token, issueId, taskId)
       : undefined;
     // 物化挂载的技能进 worktree（Claude Code 从 .claude/skills 自动发现）；best-effort，不阻断
     try {
@@ -1678,7 +1733,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     let r = await spec.runner(
       buildPrompt(claim, { full: !priorSession, attachments: resolvedAtts }),
       cwd,
-      { model, effort, sessionId: priorSession, mcpConfig, signal: ac.signal },
+      { model, effort, sessionId: priorSession, mcp, issueId, signal: ac.signal },
       reporter,
     );
     let usage = r.usage ?? null;
@@ -1694,7 +1749,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       r = await spec.runner(
         buildPrompt(claim, { full: true, attachments: resolvedAtts }),
         cwd,
-        { model, effort, mcpConfig, signal: ac.signal },
+        { model, effort, mcp, issueId, signal: ac.signal },
         reporter,
       );
       usage = mergeUsage(usage, r.usage ?? null); // 累计两次执行成本
