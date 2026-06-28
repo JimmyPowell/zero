@@ -1327,6 +1327,24 @@ async function readJsonLines(
   if (buffer.trim()) onLine(buffer.trim());
 }
 
+// Zero 的 effort 档（low/medium/high/xhigh/max/minimal）→ 各 provider 的原生取值。
+// 未知档返回 null（不注入，用 CLI 默认）。
+function codexEffort(e?: string | null): string | null {
+  if (!e) return null;
+  const v = e.toLowerCase();
+  if (v === "minimal") return "low"; // codex 无 minimal
+  if (v === "max") return "xhigh"; // codex 无 max
+  return ["low", "medium", "high", "xhigh"].includes(v) ? v : null;
+}
+function opencodeVariant(e?: string | null): string | null {
+  if (!e) return null;
+  const v = e.toLowerCase();
+  if (["low", "minimal"].includes(v)) return "minimal";
+  if (["medium", "high"].includes(v)) return "high";
+  if (["xhigh", "max"].includes(v)) return "max";
+  return null;
+}
+
 // 把全部 proxy 环境变量（大小写都设）统一覆写成 url，确保盖掉继承值；url 空则不覆写（保持继承）。
 function proxyEnv(url?: string): Record<string, string> {
   if (!url) return {};
@@ -1350,6 +1368,9 @@ async function runCodex(
 ): Promise<RunResult> {
   const cmd = ["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox"];
   if (opts.model) cmd.push("-m", opts.model);
+  // 推理强度：codex 无 --effort，走 -c model_reasoning_effort（minimal→low / max→xhigh）
+  const cxEffort = codexEffort(opts.effort);
+  if (cxEffort) cmd.push("-c", `model_reasoning_effort=${cxEffort}`);
   // 注入 Zero 上下文 MCP（codex 无 --mcp-config，走 -c mcp_servers.zero.* 行内覆盖）
   if (opts.mcp) cmd.push(...codexMcpArgs(opts.mcp));
   if (opts.sessionId) cmd.push("resume", opts.sessionId);
@@ -1447,6 +1468,9 @@ async function runOpenCode(
     "--thinking",
   ];
   if (opts.model) cmd.push("-m", opts.model);
+  // 推理强度：opencode 用 --variant（minimal|high|max）
+  const variant = opencodeVariant(opts.effort);
+  if (variant) cmd.push("--variant", variant);
   if (opts.sessionId) cmd.push("-s", opts.sessionId);
   cmd.push(prompt);
 
@@ -1739,11 +1763,9 @@ async function executeClaim(server: string, token: string, claim: Claim) {
       return;
     }
     const model = claim.agent?.model ?? null;
-    // 推理强度：仅 Claude 系 provider 注入（其它 runner 忽略 opts.effort）
-    const effort =
-      provider === "claude_code" || provider === "codebuddy"
-        ? (claim.agent?.effort ?? null)
-        : null;
+    // 推理强度：各 provider 都接（runner 内按 provider 映射成原生取值：claude/codebuddy --effort、
+    // codex -c model_reasoning_effort、opencode --variant；kimi 忽略）
+    const effort = claim.agent?.effort ?? null;
     // MCP 上下文（按需回拉更深上下文 / 自我续跑 / 团队知识库）：claude/codebuddy/codex/opencode 都注入；
     // 各 runner 据 spec.mcp 用各自原生方式接入同一个 zero 上下文 server（kimi 暂不支持）。
     const mcp = spec.mcp
