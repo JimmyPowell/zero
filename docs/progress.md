@@ -2,6 +2,37 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-28 · 多 Provider 完善 P1/P2：codex/opencode 代理分流 + 用量 + 适配器事件 + 推理强度（main cb4bcc2→eadb476）⚙️
+
+接 P0（MCP 注入）后，把 codex/opencode 从「能跑」拉到「时间线/能力追平 claude」。四个 commit：
+
+- **`cb4bcc2` 代理分流 + codex 用量字段**：一个 daemon 进程一份 env 无法同时满足「claude 走鉴权代理 /
+  codex 走本机代理」（实测 codex 误用继承的鉴权代理 → `wss://chatgpt.com/.../responses` connection
+  reset）。新增 `proxyEnv()`，`runCodex` 经 **`ZERO_CODEX_PROXY`** 覆写 codex 子进程全部 proxy 变量
+  （claude/codebuddy 仍继承鉴权代理）。并修 codex 0.135 真实用量字段：缓存读 `cached_input_tokens`
+  （原读 `cache_read_*` 恒 0）、输出并入 `reasoning_output_tokens`（原漏算）。
+  → 验证：codex 端到端实跑（本机代理）成功调用注入的 zero MCP，`turn.completed` 用量
+  `cached_input_tokens=19200 / reasoning_output_tokens=612` 印证字段名。
+- **`97dae33` codex 适配器重写**：新增 `mcp_tool_call`/`web_search`/`todo_list` 分支（原整类丢弃）；
+  `file_change` 读 `changes[]`（+add/~update/-delete）且单 `item.completed` 也补 tool_call；
+  `toolUseId=item.id` 配对；`turn.completed` 产 usage 卡 +「执行结束」；`thread.started` 产「初始化」；
+  reasoning/agent_message 仅 completed 出（`item.updated` 不刷屏）；复用 `normalizeToolName`。
+  → 真实+合成样本单测 12 事件全部正确。
+- **`48af652` opencode 适配器**：`runOpenCode` 加 `--thinking`，适配器新增 `reasoning→thinking`；
+  累计 `step_finish` 的 tokens+cost、跑完一次性产 usage 卡（含真实 $）；补「初始化 · model」。
+  → 适配器单测 + `--thinking` live smoke（deepseek）exit 0。
+- **`eadb476` 推理强度透传**：dispatch 原把 effort 限定给 claude/codebuddy；改为各 provider 都接，
+  runner 内映射：codex `-c model_reasoning_effort`（minimal→low/max→xhigh）、opencode `--variant`
+  （low/minimal→minimal、medium/high→high、xhigh/max→max）。→ 两 CLI 实测接受。
+
+**daemon 启动方式更新**（代理分流）：`export ZERO_CODEX_PROXY=http://127.0.0.1:7890`（鉴权代理由 profile
+的 `HTTPS_PROXY` 供 claude），再 `bun run src/index.ts start --server … --token …`。daemon typecheck 全过。
+
+**仍待办**：opencode `--format json` 短跑可能不发 `step_finish` → usage 偶丢（上游 #26855，建议
+`opencode export` 兜底，影响小）；P3 技能跨 provider 物化（codex `.agents/skills` 等，见
+[provider-skills-mounting.md](./provider-skills-mounting.md)）；可选：opencode server/SSE 模式（原生
+permission/question 映射评论审批环路，大重构）。
+
 ## 2026-06-28 · 多 Provider 完善 P0：codex / opencode 接入 Zero 上下文 MCP（main c6ed227）🔌
 
 **缘起（调研）**：实跑探针 + 代码盘点确认 codex/opencode 是 `PROVIDERS` 里的「二等公民」——
