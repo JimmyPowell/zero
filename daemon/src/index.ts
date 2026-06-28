@@ -1327,6 +1327,19 @@ async function readJsonLines(
   if (buffer.trim()) onLine(buffer.trim());
 }
 
+// 把全部 proxy 环境变量（大小写都设）统一覆写成 url，确保盖掉继承值；url 空则不覆写（保持继承）。
+function proxyEnv(url?: string): Record<string, string> {
+  if (!url) return {};
+  return {
+    HTTP_PROXY: url,
+    HTTPS_PROXY: url,
+    ALL_PROXY: url,
+    http_proxy: url,
+    https_proxy: url,
+    all_proxy: url,
+  };
+}
+
 // 跑 Codex（无头，流式）：`codex exec --json`。stdin 必须关（否则卡在读 stdin）。
 // 需联网（走 ChatGPT 后端，daemon 须带代理 env 启动）；会话续接走 `exec resume <id>`。
 async function runCodex(
@@ -1348,7 +1361,9 @@ async function runCodex(
     stdout: "pipe",
     stderr: "pipe",
     cwd,
-    env: process.env, // 透传代理等 env
+    // codex 专属代理：本地 codex 经 ChatGPT 后端、需走本机代理（claude/codebuddy 走鉴权代理）。
+    // ZERO_CODEX_PROXY 设了就覆写 codex 子进程全部 proxy 变量（盖掉从 daemon 继承的大写鉴权代理）；未设则继承。
+    env: { ...process.env, ...proxyEnv(process.env.ZERO_CODEX_PROXY) },
     signal: opts.signal, // 取消时杀子进程
   });
 
@@ -1385,8 +1400,14 @@ async function runCodex(
         model,
         costUsd: null, // codex 经 ChatGPT 订阅，无单价
         inputTokens: num(u.input_tokens ?? u.input ?? u.prompt_tokens) ?? 0,
-        outputTokens: num(u.output_tokens ?? u.output ?? u.completion_tokens) ?? 0,
-        cacheReadTokens: num(u.cache_read_tokens ?? u.cache_read_input_tokens) ?? 0,
+        // codex 0.135 真实字段：output_tokens + reasoning_output_tokens（推理 token 也按 output 计）。
+        outputTokens:
+          (num(u.output_tokens ?? u.output ?? u.completion_tokens) ?? 0) +
+          (num(u.reasoning_output_tokens) ?? 0),
+        // 缓存读真实字段是 cached_input_tokens（旧别名留作兜底）。
+        cacheReadTokens:
+          num(u.cached_input_tokens ?? u.cache_read_tokens ?? u.cache_read_input_tokens) ??
+          0,
         cacheWriteTokens:
           num(u.cache_write_tokens ?? u.cache_creation_input_tokens) ?? 0,
         durationMs: null,
