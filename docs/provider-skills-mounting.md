@@ -63,4 +63,5 @@ skills:
 - server/web：**零改动**（技能数据模型/挂载 API/详情页都不变）。
 
 ## 5. 状态
-⏳ **待办**。先把 §3 三个目录约定查实，再按 §2.1 实现。当前 main 上：claude/codebuddy 技能生效，codex/opencode/kimi 技能**暂不生效**（物化只写 `.claude/skills`）。
+✅ **已实现（2026-06-28，main `1914ab5`）**，按 §2.1 的 `dir` 策略落地：`PROVIDERS[provider].skills = {kind:"dir", dirs:[…]}`，`materializeSkills(cwd, skills, strategy)` 逐目录物化。映射：claude_code/codebuddy→`.claude/skills`、codex→`.agents/skills`、opencode→`.claude/skills`+`.agents/skills`（双写）、kimi→空（无原生机制）。
+实跑验证：opencode 经原生 skill 工具加载、codex（本机代理 + git worktree）经 `.agents/skills` 找到并用上同一 SKILL.md 暗号。`agentsmd`/`prompt` 兜底策略暂未做（kimi 本机未安装，留待需要时）。

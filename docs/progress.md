@@ -2,6 +2,17 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-06-28 · 多 Provider 完善 P3：技能跨 provider 物化（main 1914ab5）🧩
+
+落地 [provider-skills-mounting.md](./provider-skills-mounting.md) §2.1：`materializeSkills` 从写死
+`.claude/skills` 改为按 `PROVIDERS[provider].skills = {kind:"dir", dirs:[…]}` 逐目录物化。映射：
+claude_code/codebuddy→`.claude/skills`、codex→`.agents/skills`（agentskills.io 通用标准）、
+opencode→`.claude/skills`+`.agents/skills`（双写最大兼容）、kimi→空（无原生机制）。SKILL.md 跨工具
+通用、一份正文通吃；git exclude 已覆盖 `.claude/.agents/.codex/.opencode` 不污染 diff；每目录独立
+manifest 只清自管 slug。**实跑验证**：opencode 经原生 skill 工具、codex（本机代理 + git worktree）
+经 `.agents/skills` 都成功加载同一 SKILL.md 并回出暗号。至此 codex/opencode 与 claude 在
+MCP 上下文 / 时间线事件 / 用量 / 推理强度 / 技能 五条线全部拉平。
+
 ## 2026-06-28 · 多 Provider 完善 P1/P2：codex/opencode 代理分流 + 用量 + 适配器事件 + 推理强度（main cb4bcc2→eadb476）⚙️
 
 接 P0（MCP 注入）后，把 codex/opencode 从「能跑」拉到「时间线/能力追平 claude」。四个 commit：
