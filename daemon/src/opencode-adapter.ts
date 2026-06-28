@@ -53,6 +53,20 @@ export function opencodeAdapter(obj: unknown): RunEvent[] {
       break;
     }
 
+    // 推理 / 思考（需 `opencode run --thinking` 才会发；默认关）
+    case "reasoning": {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (text.trim()) {
+        out.push({
+          type: "thinking",
+          text: preview(text),
+          detail: detailCap(text),
+          payload: capPayload(part),
+        });
+      }
+      break;
+    }
+
     case "tool_use": {
       const tool = String(part.tool ?? "tool");
       const state = (part.state ?? {}) as Record<string, any>;

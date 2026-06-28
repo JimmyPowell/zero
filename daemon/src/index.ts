@@ -1437,7 +1437,15 @@ async function runOpenCode(
   opts: RunOpts,
   reporter: Reporter,
 ): Promise<RunResult> {
-  const cmd = ["opencode", "run", "--format", "json", "--dangerously-skip-permissions"];
+  // --thinking：让 opencode 输出 reasoning 事件（默认关），由 opencodeAdapter 翻成 thinking
+  const cmd = [
+    "opencode",
+    "run",
+    "--format",
+    "json",
+    "--dangerously-skip-permissions",
+    "--thinking",
+  ];
   if (opts.model) cmd.push("-m", opts.model);
   if (opts.sessionId) cmd.push("-s", opts.sessionId);
   cmd.push(prompt);
@@ -1476,6 +1484,9 @@ async function runOpenCode(
     numTurns: null,
   };
 
+  // 初始化状态（opencode 事件不带 model，由 runner 已知值补，时间线上与 claude 对齐）
+  reporter.push({ type: "run_status", text: `初始化 · ${model ?? "opencode"}` });
+
   await readJsonLines(proc.stdout, (line) => {
     let o: Record<string, any>;
     try {
@@ -1510,6 +1521,24 @@ async function runOpenCode(
     proc.exited,
   ]);
   const finalUsage = hasUsage ? usage : null;
+  // 用量卡进时间线（opencode 有真实 cost）；累计值一次性产出，避免每个 step 刷一张
+  if (finalUsage) {
+    const line = [
+      finalUsage.inputTokens ? `输入 ${finalUsage.inputTokens}` : null,
+      finalUsage.outputTokens ? `输出 ${finalUsage.outputTokens}` : null,
+      finalUsage.cacheReadTokens ? `缓存读 ${finalUsage.cacheReadTokens}` : null,
+      (finalUsage.costUsd ?? 0) > 0 ? `$${(finalUsage.costUsd ?? 0).toFixed(4)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    if (line)
+      reporter.push({
+        type: "usage",
+        text: line,
+        detail: line,
+        payload: { usage: finalUsage },
+      });
+  }
   // opencode 出错也可能 exit 0 → 以 error 事件为准
   if (code !== 0 || sawError) {
     const detail = errMsg || stderr.trim() || `opencode exited ${code}`;
