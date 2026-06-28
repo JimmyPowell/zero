@@ -981,15 +981,23 @@ function materializeInto(root: string, skills: SkillSpec[]) {
   writeFileSync(manifestPath, JSON.stringify(now));
 }
 
-// 物化进 worktree：Claude Code 从 cwd 的 .claude/skills/ 自动发现（OpenCode 也读它）。
-// 即便本轮无技能也跑一遍：清掉上轮残留。返回物化的技能数。
+// 技能物化目录策略（按 provider 的技能目录约定；dirs 为相对工作目录的路径，可多个；
+// 空 dirs = 该 provider 无原生 skills 机制，不物化）。
+type SkillStrategy = { kind: "dir"; dirs: string[] };
+
+// 物化进 worktree：按 provider 的目录约定写 SKILL.md（claude/codebuddy→.claude/skills、
+// codex→.agents/skills、opencode→两者；kimi 无机制）。SKILL.md 是跨工具开放标准，一份正文通吃，
+// 只目录约定不同。即便本轮无技能也跑一遍：清掉上轮残留。返回物化的技能数。
 async function materializeSkills(
   cwd: string,
   skills: SkillSpec[],
+  strategy: SkillStrategy,
 ): Promise<number> {
-  materializeInto(join(cwd, ".claude", "skills"), skills);
+  for (const dir of strategy.dirs) {
+    materializeInto(join(cwd, ...dir.split("/")), skills);
+  }
   await excludeFromGit(cwd);
-  return skills.length;
+  return strategy.dirs.length ? skills.length : 0;
 }
 
 // 评论附件：小文件落盘「推」给 agent、大文件给签名 URL 让 agent 按需「拉」
@@ -1648,39 +1656,46 @@ async function runKimi(
   return { ok: true, result: result.trim(), sessionId, usage: null };
 }
 
-// provider → runner + 续接失败特征（用于回退新会话）+ 是否注入 MCP 上下文
+// provider → runner + 续接失败特征（用于回退新会话）+ 是否注入 MCP 上下文 + 技能物化目录策略
 const PROVIDERS: Record<
   string,
-  { runner: Runner; sessionInvalid: RegExp; mcp: boolean }
+  { runner: Runner; sessionInvalid: RegExp; mcp: boolean; skills: SkillStrategy }
 > = {
   claude_code: {
     runner: runClaude,
     sessionInvalid: /no conversation found|session id/i,
     mcp: true,
+    skills: { kind: "dir", dirs: [".claude/skills"] },
   },
   codex: {
     runner: runCodex,
     sessionInvalid: /thread|session|resume|not found/i,
     mcp: true,
+    // codex 从 cwd 向上扫 .agents/skills（agentskills.io 通用标准），不读 .claude/skills
+    skills: { kind: "dir", dirs: [".agents/skills"] },
   },
   opencode: {
     runner: runOpenCode,
     sessionInvalid: /session|not found/i,
     mcp: true,
+    // opencode 读 .claude/skills 与 .agents/skills；双写最大兼容、不回归原 .claude 路径
+    skills: { kind: "dir", dirs: [".claude/skills", ".agents/skills"] },
   },
-  // CodeBuddy（腾讯）是 Claude Code 衍生版：stream-json / 续接 / MCP 全同构，
+  // CodeBuddy（腾讯）是 Claude Code 衍生版：stream-json / 续接 / MCP / 技能全同构，
   // 直接复用 claudeAdapter 与 runClaudeLike。网关在 www.codebuddy.ai，无需代理。
   codebuddy: {
     runner: runCodebuddy,
     sessionInvalid: /no conversation found|session id/i,
     mcp: true,
+    skills: { kind: "dir", dirs: [".claude/skills"] },
   },
   // Kimi CLI（Moonshot）：OpenAI-chat 风格 stream-json，独立 kimiAdapter；
-  // sessionId 从 stderr 抓、鉴权读 ~/.kimi 配置；暂不注入 MCP（与 codex/opencode 一致）。
+  // sessionId 从 stderr 抓、鉴权读 ~/.kimi 配置；无原生 skills 机制 + 暂不注入 MCP。
   kimi: {
     runner: runKimi,
     sessionInvalid: /session|not found|resume|无效|不存在/i,
     mcp: false,
+    skills: { kind: "dir", dirs: [] },
   },
 };
 
@@ -1771,10 +1786,10 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     const mcp = spec.mcp
       ? buildZeroMcp(server, token, issueId, taskId)
       : undefined;
-    // 物化挂载的技能进 worktree（Claude Code 从 .claude/skills 自动发现）；best-effort，不阻断
+    // 物化挂载的技能进 worktree（按 provider 目录约定）；best-effort，不阻断
     try {
-      const n = await materializeSkills(cwd, claim.agent?.skills ?? []);
-      if (n) console.log(`物化 ${n} 个技能 → ${cwd}/.claude/skills`);
+      const n = await materializeSkills(cwd, claim.agent?.skills ?? [], spec.skills);
+      if (n) console.log(`物化 ${n} 个技能 → ${spec.skills.dirs.join(", ")}`);
     } catch (err) {
       console.error(`物化技能失败（忽略继续）：${(err as Error).message}`);
     }
