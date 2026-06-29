@@ -26,6 +26,7 @@ import {
 import { FolderKanban, ChevronDown, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
+import { readDraft, writeDraft, clearDraft } from "@/lib/drafts";
 import { toast } from "@/lib/toast-store";
 import { issueKey } from "@/lib/issue-meta";
 import {
@@ -39,6 +40,42 @@ import {
   type Project,
 } from "@/lib/api-client";
 
+// 新建需求弹窗的草稿 key（单例弹窗，全局一份）。正文附件单独存（见 att）。
+const FORM_DRAFT_KEY = "create-issue";
+
+type IssueFormDraft = {
+  title: string;
+  description: string;
+  status: IssueStatus;
+  priority: IssuePriority;
+  assignee: AssigneeValue;
+  binding: BindingValue;
+  projectId: string | null;
+};
+
+const DEFAULT_FORM: IssueFormDraft = {
+  title: "",
+  description: "",
+  status: "in_progress",
+  priority: "none",
+  assignee: null,
+  binding: { kind: "none" },
+  projectId: null,
+};
+
+// 草稿是否「等于空」（全是默认值 + 没正文）——是的话就不落盘 / 清掉 key。
+function isFormEmpty(f: IssueFormDraft): boolean {
+  return (
+    !f.title.trim() &&
+    !f.description.trim() &&
+    f.status === "in_progress" &&
+    f.priority === "none" &&
+    f.assignee == null &&
+    f.binding.kind === "none" &&
+    f.projectId == null
+  );
+}
+
 export function CreateIssueDialog({
   open,
   workspaceId,
@@ -51,20 +88,37 @@ export function CreateIssueDialog({
   onCreated: (issue: Issue) => void;
 }) {
   const { t } = useUi();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<IssueStatus>("in_progress");
-  const [priority, setPriority] = useState<IssuePriority>("none");
-  const [assignee, setAssignee] = useState<AssigneeValue>(null);
-  const [binding, setBinding] = useState<BindingValue>({ kind: "none" });
-  const [projectId, setProjectId] = useState<string | null>(null);
+  // 弹窗本就常驻不卸载（关闭只是不渲染），所以关掉再开内容还在；
+  // 但整页刷新会丢——这里用 localStorage 起一份种子，让刷新后也能恢复。
+  const [seed] = useState(() => readDraft<IssueFormDraft>(FORM_DRAFT_KEY, DEFAULT_FORM));
+  const [title, setTitle] = useState(seed.title);
+  const [description, setDescription] = useState(seed.description);
+  const [status, setStatus] = useState<IssueStatus>(seed.status);
+  const [priority, setPriority] = useState<IssuePriority>(seed.priority);
+  const [assignee, setAssignee] = useState<AssigneeValue>(seed.assignee);
+  const [binding, setBinding] = useState<BindingValue>(seed.binding);
+  const [projectId, setProjectId] = useState<string | null>(seed.projectId);
   const [members, setMembers] = useState<Member[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  // 正文粘贴/拖拽/选文件的附件编排（与详情页评论框共用）
-  const att = useAttachmentComposer(workspaceId);
+  // 正文粘贴/拖拽/选文件的附件编排（与详情页评论框共用）；待发清单也持久化，刷新不丢
+  const att = useAttachmentComposer(workspaceId, "create-issue-att");
+
+  // 表单字段变化时写回草稿（附件由 att 自己持久化）；全默认则清空 key
+  useEffect(() => {
+    const draft: IssueFormDraft = {
+      title,
+      description,
+      status,
+      priority,
+      assignee,
+      binding,
+      projectId,
+    };
+    writeDraft(FORM_DRAFT_KEY, draft, isFormEmpty(draft));
+  }, [title, description, status, priority, assignee, binding, projectId]);
 
   // 打开时拉取成员 + 智能体供指派
   useEffect(() => {
@@ -112,6 +166,8 @@ export function CreateIssueDialog({
     setProjectId(null);
     setError(null);
     att.reset();
+    // 创建成功后清掉草稿（att.reset 会清附件草稿，这里清表单草稿）
+    clearDraft(FORM_DRAFT_KEY);
   }
 
   async function submit(e?: FormEvent) {

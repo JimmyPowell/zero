@@ -6,6 +6,7 @@ import {
 import { Paperclip, X } from "lucide-react";
 
 import { api, attachmentUrl, type Attachment } from "@/lib/api-client";
+import { useDraftState } from "@/lib/drafts";
 import {
   ImageLightbox,
   type LightboxImage,
@@ -20,8 +21,17 @@ export function fmtSize(n: number): string {
 
 // 「选了就传」附件编排：粘贴 / 拖拽 / 选文件统一走 pickFiles → 即传 → 进 pending 待发列表。
 // 详情页评论框与新建需求弹窗共用：详情页发评论时带 pending.id，弹窗创建需求时带 pending.id。
-export function useAttachmentComposer(workspaceId: string | null | undefined) {
-  const [pending, setPending] = useState<Attachment[]>([]);
+// 传 persistKey 则把 pending 列表持久化到 localStorage（切页/刷新后恢复待发附件）；
+// 附件本身早已上传到服务器（有 id），这里只需记住「待发清单」即可。
+export function useAttachmentComposer(
+  workspaceId: string | null | undefined,
+  persistKey?: string,
+) {
+  const [pending, setPending] = useDraftState<Attachment[]>(
+    persistKey ?? "",
+    [],
+    (v) => v.length === 0,
+  );
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 

@@ -4,6 +4,7 @@ import { Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
+import { useDraftState } from "@/lib/drafts";
 import { api, type IssueEvent } from "@/lib/api-client";
 import {
   useAttachmentComposer,
@@ -23,10 +24,16 @@ export function CommentComposer({
   onPosted: (event: IssueEvent) => void | Promise<void>;
 }) {
   const { t } = useUi();
-  const [comment, setComment] = useState("");
+  // 评论草稿按 issueId 持久化：切到别的页面 / 刷新 / 切到另一条需求后回来都不丢，
+  // 发送成功后清除（见 postComment）。
+  const [comment, setComment] = useDraftState(
+    `comment:${issueId}`,
+    "",
+    (v) => v.trim().length === 0,
+  );
   const [posting, setPosting] = useState(false);
-  // 评论框附件编排（粘贴/拖拽/选文件 → 即传 → 待发；发评论时带 id）
-  const att = useAttachmentComposer(wsId);
+  // 评论框附件编排（粘贴/拖拽/选文件 → 即传 → 待发；发评论时带 id）；待发清单同样按 issueId 持久化
+  const att = useAttachmentComposer(wsId, `comment-att:${issueId}`);
 
   async function postComment() {
     const body = comment.trim();
