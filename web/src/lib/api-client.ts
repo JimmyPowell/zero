@@ -310,7 +310,8 @@ export type AgentProvider =
   | "codex"
   | "opencode"
   | "codebuddy"
-  | "kimi";
+  | "kimi"
+  | "tclaude";
 
 export interface Agent {
   id: string;

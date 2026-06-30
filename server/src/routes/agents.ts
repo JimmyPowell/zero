@@ -16,9 +16,10 @@ const providerEnum = z.enum([
   "opencode",
   "codebuddy",
   "kimi",
+  "tclaude",
 ]);
 
-// 推理强度：仅 Claude 系（claude_code/codebuddy）注入为 `--effort`；空串/缺省 = 不设。
+// 推理强度：仅 Claude 系（claude_code/codebuddy/tclaude）注入为 `--effort`；空串/缺省 = 不设。
 // codebuddy 另支持 minimal，这里统一收口为 Claude Code 官方取值集。
 const effortEnum = z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]);
 

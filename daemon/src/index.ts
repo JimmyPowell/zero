@@ -128,6 +128,7 @@ function discover(): Record<string, boolean> {
     opencode: Bun.which("opencode") != null,
     codebuddy: Bun.which("codebuddy") != null,
     kimi: Bun.which("kimi") != null,
+    tclaude: Bun.which("tclaude") != null,
   };
 }
 
@@ -1209,7 +1210,8 @@ async function runClaudeLike(
     stderr: "pipe",
     cwd,
     signal: opts.signal, // 取消时杀子进程
-    env: process.env,
+    // tclaude 走腾讯内网网关，须与 claude/codebuddy 的代理隔离（见 tclaudeEnv）；其它 bin 保持原样继承。
+    env: bin === "tclaude" ? tclaudeEnv() : process.env,
   });
 
   let result: string | undefined;
@@ -1364,6 +1366,25 @@ function proxyEnv(url?: string): Record<string, string> {
     https_proxy: url,
     all_proxy: url,
   };
+}
+
+// tclaude（腾讯 TClaude）的子进程环境：它直连腾讯内网网关 copilot.tencent.com，
+// 绝不能走给 claude→anthropic 用的境外代理。默认剥离继承来的全部 proxy 变量（直连），
+// 并用 NO_PROXY 收口腾讯内网域名做双保险；若显式设了 ZERO_TCLAUDE_PROXY 则改用它（兜底）。
+// 仅对 bin==="tclaude" 生效——claude/codebuddy 那条链完全不受影响。
+function tclaudeEnv(): Record<string, string> {
+  const e: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v == null) continue;
+    if (/^(https?|all)_proxy$/i.test(k)) continue; // 剥离继承的代理 → 直连内网
+    e[k] = v;
+  }
+  if (process.env.ZERO_TCLAUDE_PROXY)
+    Object.assign(e, proxyEnv(process.env.ZERO_TCLAUDE_PROXY));
+  const tencent = "copilot.tencent.com,.tencent.com,.woa.com,.codebuddy.cn";
+  e.NO_PROXY = e.NO_PROXY ? `${e.NO_PROXY},${tencent}` : tencent;
+  e.no_proxy = e.NO_PROXY;
+  return e;
 }
 
 // 跑 Codex（无头，流式）：`codex exec --json`。stdin 必须关（否则卡在读 stdin）。
@@ -1591,6 +1612,11 @@ const runClaude: Runner = (prompt, cwd, opts, reporter) =>
   runClaudeLike("claude", prompt, cwd, opts, reporter);
 const runCodebuddy: Runner = (prompt, cwd, opts, reporter) =>
   runClaudeLike("codebuddy", prompt, cwd, opts, reporter);
+// tclaude（腾讯 TClaude）= 封装原版 Claude Code 的 wrapper，参数原样透传给底层 claude-code，
+// stream-json 与 claude 逐字段同构 → 复用同一 runClaudeLike + claudeAdapter，只换二进制名。
+// 网络隔离在 runClaudeLike 内按 bin 处理（tclaudeEnv 直连内网）。
+const runTclaude: Runner = (prompt, cwd, opts, reporter) =>
+  runClaudeLike("tclaude", prompt, cwd, opts, reporter);
 
 // 跑 Kimi CLI（无头，流式）：`kimi --print --output-format stream-json`。
 // 事件为 OpenAI-chat 风格逐条消息（见 kimi-adapter）。stdin 关闭防卡。
@@ -1689,6 +1715,15 @@ const PROVIDERS: Record<
     mcp: true,
     skills: { kind: "dir", dirs: [".claude/skills"] },
   },
+  // TClaude（腾讯）：封装原版 Claude Code 的 wrapper，参数透传 → stream-json/续接/MCP/技能/--effort 全同构，
+  // 直接复用 claudeAdapter 与 runClaudeLike。网关 copilot.tencent.com 须直连内网（runClaudeLike 内按 bin 剥离代理）；
+  // 登录态复用本机 ~/.tclaude（需预先 `tclaude login` 完成 IOA 授权）。
+  tclaude: {
+    runner: runTclaude,
+    sessionInvalid: /no conversation found|session id/i,
+    mcp: true,
+    skills: { kind: "dir", dirs: [".claude/skills"] },
+  },
   // Kimi CLI（Moonshot）：OpenAI-chat 风格 stream-json，独立 kimiAdapter；
   // sessionId 从 stderr 抓、鉴权读 ~/.kimi 配置；无原生 skills 机制 + 暂不注入 MCP。
   kimi: {
@@ -1760,7 +1795,7 @@ async function executeClaim(server: string, token: string, claim: Claim) {
     const spec = PROVIDERS[provider];
     if (!spec) {
       await post(server, token, `/daemon/tasks/${taskId}/fail`, {
-        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode / codebuddy / kimi）`,
+        error: `provider ${provider || "(空)"} 暂未支持（支持 claude_code / codex / opencode / codebuddy / kimi / tclaude）`,
       });
       return;
     }

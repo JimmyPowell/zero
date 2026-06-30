@@ -29,6 +29,7 @@ const PROVIDERS: AgentProvider[] = [
   "opencode",
   "codebuddy",
   "kimi",
+  "tclaude",
 ];
 export const providerLabel: Record<AgentProvider, string> = {
   claude_code: "Claude Code",
@@ -36,6 +37,7 @@ export const providerLabel: Record<AgentProvider, string> = {
   opencode: "OpenCode",
   codebuddy: "CodeBuddy",
   kimi: "Kimi",
+  tclaude: "TClaude",
 };
 
 // 各 provider 常用模型建议（低成本优先）；点选即填入。模型框仍可自由输入。
@@ -55,6 +57,14 @@ const modelSuggestions: Record<AgentProvider, string[]> = {
     "gpt-5.5",
   ],
   kimi: [], // 留空用 default_model（裸名报 LLM not set）
+  // TClaude（腾讯内网 IOA 网关）支持的 Claude 模型，低成本在前；留空则用其默认 claude-opus-4-8[1m]。
+  // 注意：--model 取 tclaude 的「name」（连字符 + 可选 [1m] 百万上下文），非带点的 id。
+  tclaude: [
+    "claude-haiku-4-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6[1m]",
+    "claude-opus-4-8[1m]",
+  ],
 };
 
 // 推理强度仅 Claude 系 provider 注入（claude_code/codebuddy → `--effort`）。
@@ -62,6 +72,8 @@ const modelSuggestions: Record<AgentProvider, string[]> = {
 const effortOptions: Partial<Record<AgentProvider, AgentEffort[]>> = {
   claude_code: ["low", "medium", "high", "xhigh", "max"],
   codebuddy: ["minimal", "low", "medium", "high", "xhigh", "max"],
+  // tclaude = 原版 Claude Code → 同 claude_code 的 `--effort` 取值集
+  tclaude: ["low", "medium", "high", "xhigh", "max"],
 };
 
 export function CreateAgentDialog({
