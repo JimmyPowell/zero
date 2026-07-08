@@ -106,7 +106,7 @@ export async function fireWakeup(w: schema.AgentWakeup): Promise<boolean> {
       : `🔔 你登记看护的后台进程（PID ${w.pid}）已结束${w.note ? `（${w.note}）` : ""}。请检查它的产出/结果，然后继续或汇报。`;
   const ev = await insertSystemComment(w, reason, w.kind);
   // 复用现成派发：自动续上 session_id（resume）+ 对已有活动任务去重
-  await enqueueTaskForIssue(w.issueId, ev);
+  await enqueueTaskForIssue(w.issueId, ev, "wake");
   await db
     .update(schema.agentWakeup)
     .set({ status: "fired", firedAt: new Date() })

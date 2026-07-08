@@ -31,8 +31,23 @@ export const Markdown = memo(function Markdown({
         components={{
           // 所有链接一律新标签打开 + 安全 rel —— 否则在 SPA 里点链接会顶掉当前页面（整个 Zero 应用被导航走）。
           // 作用在渲染层、与 href 无关，故对一切网址（含 gfm 自动识别的裸链接）一致生效。
-          a({ node: _node, ...props }) {
-            return <a {...props} target="_blank" rel="noopener noreferrer" />;
+          // 例外：#mention 是 @提及 的高亮标记（lib/mentions.ts 注入），渲染成高亮 span 而非链接。
+          a({ node: _node, href, ...props }) {
+            if (href === "#mention") {
+              return (
+                <span className="rounded bg-active-fg/10 px-1 py-0.5 font-medium text-active-fg not-prose">
+                  {props.children}
+                </span>
+              );
+            }
+            return (
+              <a
+                {...props}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+              />
+            );
           },
         }}
       >

@@ -2,11 +2,26 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { createMiddleware } from "hono/factory";
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  lt,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { hashToken } from "@/lib/token";
-import { assembleContext } from "@/lib/dispatch";
+import {
+  assembleContext,
+  fanOutMentions,
+  workspaceMentionAgents,
+} from "@/lib/dispatch";
+import { parseMentions } from "@/lib/mentions";
 import {
   fireWakeup,
   MAX_PENDING_WAKEUPS,
@@ -281,12 +296,29 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       return c.json({ task: null });
     }
 
+    // 同 issue 串行：worktree 每 issue 一棵（daemon 按 issueId 建），多 agent 并发会互踩工作区；
+    // 串行还保证被 @ 的 agent 在前一个跑完、结果评论入时间线后才启动（厚 push 能带上）。
+    // 排除必须放进候选查询（而非取出后再筛）：否则最旧 5 条全被繁忙 issue 挡住时，
+    // 后面本可跑的任务会被饿死。跨 runtime 同时 claim 有毫秒级竞态窗口，可接受
+    // （docs/agent-mention-design.md §4.1）。
+    const runningIssues = await db
+      .selectDistinct({ issueId: schema.task.issueId })
+      .from(schema.task)
+      .where(eq(schema.task.status, "running"));
+    const busyIssueIds = runningIssues.map((r) => r.issueId);
+
     // 取最旧的若干排队任务，逐条用条件 UPDATE 抢占（并行认领下防重复领取）
     const cands = await db
       .select()
       .from(schema.task)
       .where(
-        and(eq(schema.task.runtimeId, rt.id), eq(schema.task.status, "queued")),
+        and(
+          eq(schema.task.runtimeId, rt.id),
+          eq(schema.task.status, "queued"),
+          busyIssueIds.length
+            ? notInArray(schema.task.issueId, busyIssueIds)
+            : undefined,
+        ),
       )
       .orderBy(asc(schema.task.createdAt))
       .limit(5);
@@ -334,6 +366,7 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     const context = await assembleContext(cand.issueId, {
       agentId: cand.agentId,
       resuming: !!cand.sessionId,
+      triggerEventId: cand.triggerEventId,
     });
     // 挂载的技能随 claim 下发，daemon 据此在 worktree 里物化成 SKILL.md（C3）
     const skills = await loadAgentSkills(cand.agentId);
@@ -730,15 +763,33 @@ export const daemonRoutes = new Hono<DaemonEnv>()
       const { summary, sessionId, usage, changes } = c.req.valid("json");
 
       if (summary && summary.trim()) {
+        const text = summary.trim();
+        // agent 总结里的 @mention → 唤醒被点名的同事 agent（agent↔agent 协作闭环；
+        // 防自触发 + 链深护栏在 fanOutMentions 里，docs/agent-mention-design.md §4.2）
+        const mentions = parseMentions(
+          text,
+          await workspaceMentionAgents(tk.workspaceId),
+        );
+        const commentEventId = crypto.randomUUID();
         await db.insert(schema.issueEvent).values({
-          id: crypto.randomUUID(),
+          id: commentEventId,
           issueId: tk.issueId,
           workspaceId: tk.workspaceId,
           actorType: "agent",
           actorId: tk.agentId,
           kind: "comment",
-          body: summary.trim(),
+          body: text,
+          meta: mentions.length ? { mentions } : null,
         });
+        if (mentions.length) {
+          await fanOutMentions({
+            issueId: tk.issueId,
+            workspaceId: tk.workspaceId,
+            eventId: commentEventId,
+            mentionAgentIds: mentions,
+            authorAgentId: tk.agentId,
+          });
+        }
       }
       const finishedEventId = crypto.randomUUID();
       await db.insert(schema.issueEvent).values({

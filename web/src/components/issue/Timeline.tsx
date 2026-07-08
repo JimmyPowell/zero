@@ -11,6 +11,7 @@ import { ActorAvatar } from "@/components/ActorAvatar";
 import { Markdown } from "@/components/Markdown";
 import { ImageLightbox, type LightboxImage } from "@/components/issue/ImageLightbox";
 import { useUi } from "@/lib/ui-store";
+import { highlightMentions } from "@/lib/mentions";
 import { relativeTime, useElapsedMs, formatElapsed } from "@/lib/time";
 import { statusMeta, priorityMeta } from "@/lib/issue-meta";
 import { cn } from "@/lib/utils";
@@ -92,12 +93,15 @@ function RunCard({
   run,
   time,
   onOpen,
+  triggerLabel,
 }: {
   actorName: string;
   actorAvatar?: string | null;
   run: RunSummary;
   time: string;
   onOpen: () => void;
+  // 触发来源徽标（如"@ 提及触发"）；null/undefined 不显示
+  triggerLabel?: string | null;
 }) {
   const { t } = useUi();
   const pill = RUN_PILL[run.status];
@@ -118,6 +122,11 @@ function RunCard({
             {actorName}
           </span>
           <span className="text-xs text-muted-foreground">{time}</span>
+          {triggerLabel && (
+            <span className="rounded bg-active-fg/10 px-1.5 py-0.5 text-[10px] font-medium text-active-fg">
+              {triggerLabel}
+            </span>
+          )}
         </div>
         <button
           type="button"
@@ -219,6 +228,7 @@ export const Timeline = memo(function Timeline({
   onRestoreComment,
   hasMore = false,
   onLoadEarlier,
+  mentionNames,
 }: {
   events: IssueEvent[];
   runs?: Record<string, RunSummary>;
@@ -231,6 +241,8 @@ export const Timeline = memo(function Timeline({
   // 窗口化：events 只是「尾部可见窗口」，hasMore 表示上面还有更早历史，点按钮再渲染一批
   hasMore?: boolean;
   onLoadEarlier?: () => void;
+  // 本 workspace agent 名单（评论里的 @名字 高亮用）；父组件需 useMemo 稳定引用
+  mentionNames?: string[];
 }) {
   const { t, locale } = useUi();
 
@@ -289,6 +301,7 @@ export const Timeline = memo(function Timeline({
           taskId?: string;
           reason?: string;
           error?: string;
+          trigger?: string;
         } | null;
 
         // 评论：卡片
@@ -339,7 +352,11 @@ export const Timeline = memo(function Timeline({
                   </div>
                 ) : (
                   <div className="mt-1.5 rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-foreground">
-                    {ev.body && <Markdown>{ev.body}</Markdown>}
+                    {ev.body && (
+                      <Markdown>
+                        {highlightMentions(ev.body, mentionNames ?? [])}
+                      </Markdown>
+                    )}
                     {ev.attachments && ev.attachments.length > 0 && (
                       <div
                         className={cn(
@@ -377,6 +394,11 @@ export const Timeline = memo(function Timeline({
               run={runs[meta.taskId]}
               time={time}
               onOpen={() => onOpenRun?.(meta.taskId!)}
+              triggerLabel={
+                meta?.trigger === "mention"
+                  ? t("timeline.mentionTrigger")
+                  : null
+              }
             />
           );
         }
@@ -434,7 +456,10 @@ export const Timeline = memo(function Timeline({
             ? interp(t("timeline.assigned"), { name: to.name ?? "" })
             : t("timeline.unassigned");
         } else if (ev.kind === "run_queued") {
-          text = t("timeline.runQueued");
+          text =
+            meta?.trigger === "mention"
+              ? t("timeline.runQueuedMention")
+              : t("timeline.runQueued");
         } else if (ev.kind === "run_started") {
           text = t("timeline.runStarted");
         } else if (ev.kind === "run_finished") {

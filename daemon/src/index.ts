@@ -221,6 +221,9 @@ interface Claim {
     resumeFromIndex?: number;
     // Tier-0 常驻知识（pinned KB 文档）；buildPrompt 拼成「Team knowledge」段
     knowledge?: { path: string; title: string | null; content: string }[];
+    // @mention 协作：本 workspace 其他可点名的 agent；本次 run 若由 @ 触发则带点名者
+    collaborators?: { name: string; blurb?: string | null }[];
+    mentionedBy?: { name: string; type: string } | null;
   };
 }
 
@@ -1108,6 +1111,21 @@ export function buildPrompt(
       L.push("\n## Conversation so far");
     }
     for (const cm of shown) L.push(`- ${cm.author}: ${cm.body ?? ""}`);
+  }
+  // @mention 协作段：被点名提示 + 同事名单 + 防环教育（multica 实证：不教育会互 @ 死循环烧钱）
+  if (context?.mentionedBy) {
+    L.push(
+      `\n⚠️ You were @-mentioned by ${context.mentionedBy.name} (${context.mentionedBy.type === "agent" ? "another agent" : "a team member"}) — check the latest comment(s) above for what they need from you.`,
+    );
+  }
+  const collab = context?.collaborators ?? [];
+  if (collab.length) {
+    L.push("\n## Teammates (other agents in this workspace)");
+    for (const a of collab)
+      L.push(`- @${a.name}${a.blurb ? ` — ${a.blurb}` : ""}`);
+    L.push(
+      "To bring a teammate in, write `@Name` (exact name) in your final summary — they will be woken up with the full issue timeline, even if they run on a different machine. Anti-loop rules: when replying to a request from another agent, do NOT @-mention them back unless you truly need them to act again; never @ yourself; mention at most a couple of teammates per summary.",
+    );
   }
   L.push(
     "\nOn-demand tools (MCP): `zero_older_comments` (earlier comments), `zero_prior_runs` (past runs), `zero_search_knowledge` (search the team knowledge base), `zero_write_knowledge` (save a durable note/convention/gotcha to the knowledge base — use when asked to remember/沉淀 something; use mode:'append' to grow an existing doc, scope:'workspace' for team-wide rules). Prefer the context already given; call these only when needed.",

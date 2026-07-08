@@ -346,6 +346,8 @@ export function IssueDetailView() {
     (taskId: string) => setOpenDiffTaskId(taskId),
     [],
   );
+  // @ 高亮用的 agent 名单（稳定引用，Timeline memo 才不被打穿）
+  const mentionNames = useMemo(() => agents.map((a) => a.name), [agents]);
 
   // 时间线只渲染尾部窗口（最近 visibleCount 条）；上面还有更早历史时给 Timeline 一个「加载更早」入口
   const visibleEvents = useMemo(
@@ -518,6 +520,7 @@ export function IssueDetailView() {
               onRestoreComment={restoreComment}
               hasMore={hasMoreHistory}
               onLoadEarlier={loadEarlier}
+              mentionNames={mentionNames}
             />
 
             {/* 评论输入：独立组件，打字只重渲染它自己，不触动时间线（性能） */}
@@ -525,6 +528,7 @@ export function IssueDetailView() {
               wsId={wsId}
               issueId={issue.id}
               onPosted={onPosted}
+              agents={agents}
             />
             </div>
           </div>

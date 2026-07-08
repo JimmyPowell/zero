@@ -23,7 +23,12 @@ import {
   type WorkspaceEnv,
 } from "@/middleware/workspace";
 import { getMembership } from "@/lib/access";
-import { enqueueTaskForIssue } from "@/lib/dispatch";
+import {
+  enqueueTaskForIssue,
+  fanOutMentions,
+  workspaceMentionAgents,
+} from "@/lib/dispatch";
+import { parseMentions } from "@/lib/mentions";
 import { subscribe, publish } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
 import { signAttachmentPath } from "@/lib/storage";
@@ -860,6 +865,12 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       .limit(1);
     if (!exists) return c.json({ error: "需求不存在" }, 404);
 
+    // @mention：按本 workspace agent 名解析点名（纯文本 @名字），落 meta 供渲染/触发
+    const mentions = parseMentions(
+      body || "",
+      await workspaceMentionAgents(workspaceId),
+    );
+
     const eventId = crypto.randomUUID();
     await db.insert(schema.issueEvent).values({
       id: eventId,
@@ -869,6 +880,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       actorId: sub,
       kind: "comment",
       body: body || null,
+      meta: mentions.length ? { mentions } : null,
     });
 
     // 关联本工作空间内、尚未 link 的附件到该评论（再查回拿到对外 DTO）
@@ -893,6 +905,16 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
 
     // 人在 agent-assigned issue 下评论 → 触发该 agent 继续执行（此时附件已 link，上下文能带上）
     await enqueueTaskForIssue(id, eventId);
+    // @ 点名的其他 agent 也各建一条 task（assignee 若同时被 @，由 (issue,agent) 去重合并）
+    if (mentions.length) {
+      await fanOutMentions({
+        issueId: id,
+        workspaceId,
+        eventId,
+        mentionAgentIds: mentions,
+        authorAgentId: null,
+      });
+    }
 
     const me = await memberLabel(sub);
     return c.json(
@@ -901,7 +923,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
           id: eventId,
           kind: "comment",
           body: body || null,
-          meta: null,
+          meta: mentions.length ? { mentions } : null,
           createdAt: new Date(),
           actor: me ? { ...me, avatarUrl: null } : null,
           attachments,
