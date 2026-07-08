@@ -4,7 +4,7 @@
 import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
-import { enqueueTaskForIssue } from "@/lib/dispatch";
+import { enqueueTaskForAgent } from "@/lib/dispatch";
 
 // 距上一条「人(member)评论」以来，允许的连续自动续跑次数上限。超过即暂停、等人介入。
 const MAX_AUTO_CHAIN = 12;
@@ -105,8 +105,10 @@ export async function fireWakeup(w: schema.AgentWakeup): Promise<boolean> {
       ? `⏰ 你之前设定的延时唤醒已到${w.note ? `（${w.note}）` : ""}。请继续这个 issue —— 检查你在等的东西、推进或汇报进度。`
       : `🔔 你登记看护的后台进程（PID ${w.pid}）已结束${w.note ? `（${w.note}）` : ""}。请检查它的产出/结果，然后继续或汇报。`;
   const ev = await insertSystemComment(w, reason, w.kind);
-  // 复用现成派发：自动续上 session_id（resume）+ 对已有活动任务去重
-  await enqueueTaskForIssue(w.issueId, ev, "wake");
+  // 复用现成派发：自动续上 session_id（resume）+ 对已有活动任务去重。
+  // 定向给注册这个唤醒的 agent（w.agentId）——@mention 后非 assignee 也会跑 run、
+  // 也能登记唤醒，点燃时必须叫回它自己，而不是 issue 的 assignee。
+  await enqueueTaskForAgent(w.issueId, w.agentId, ev, { trigger: "wake" });
   await db
     .update(schema.agentWakeup)
     .set({ status: "fired", firedAt: new Date() })

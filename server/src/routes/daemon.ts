@@ -223,6 +223,32 @@ async function resolveIssueAgent(
   return { ok: true, agentId: iss.assigneeId };
 }
 
+// wake/watch 的注册方解析：优先从 taskId 反解真正在跑的 agent —— @mention 后非 assignee
+// 也会执行 run，唤醒必须记到执行者头上（否则点燃时会唤错人/直接 403）。
+// task 必须属于本 issue + 本 runtime 才认（防伪造 taskId 越权）；无 taskId 回退 assignee 解析。
+async function resolveWakeAgent(
+  issueId: string,
+  rt: schema.Runtime,
+  taskId?: string,
+): Promise<
+  { ok: true; agentId: string } | { ok: false; error: string; code: 403 | 404 }
+> {
+  if (taskId) {
+    const [tk] = await db
+      .select({
+        agentId: schema.task.agentId,
+        issueId: schema.task.issueId,
+        runtimeId: schema.task.runtimeId,
+      })
+      .from(schema.task)
+      .where(eq(schema.task.id, taskId))
+      .limit(1);
+    if (tk && tk.issueId === issueId && tk.runtimeId === rt.id)
+      return { ok: true, agentId: tk.agentId };
+  }
+  return resolveIssueAgent(issueId, rt);
+}
+
 // 单 issue 当前待触发的唤醒数（注册上限校验）。
 async function pendingWakeupCount(issueId: string): Promise<number> {
   const [r] = await db
@@ -558,14 +584,14 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     async (c) => {
       const rt = c.get("runtime");
       const issueId = c.req.param("id");
-      const reg = await resolveIssueAgent(issueId, rt);
+      const { afterSec, note, taskId } = c.req.valid("json");
+      const reg = await resolveWakeAgent(issueId, rt, taskId);
       if (!reg.ok) return c.json({ ok: false, error: reg.error }, reg.code);
       if ((await pendingWakeupCount(issueId)) >= MAX_PENDING_WAKEUPS)
         return c.json({
           ok: false,
           error: `该 issue 待触发的唤醒已达上限（${MAX_PENDING_WAKEUPS}），等已登记的触发后再试。`,
         });
-      const { afterSec, note, taskId } = c.req.valid("json");
       const sec = Math.min(
         Math.max(Math.round(afterSec), WAKE_MIN_SEC),
         WAKE_MAX_SEC,
@@ -605,14 +631,14 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     async (c) => {
       const rt = c.get("runtime");
       const issueId = c.req.param("id");
-      const reg = await resolveIssueAgent(issueId, rt);
+      const { pid, note, taskId } = c.req.valid("json");
+      const reg = await resolveWakeAgent(issueId, rt, taskId);
       if (!reg.ok) return c.json({ ok: false, error: reg.error }, reg.code);
       if ((await pendingWakeupCount(issueId)) >= MAX_PENDING_WAKEUPS)
         return c.json({
           ok: false,
           error: `该 issue 待触发的唤醒已达上限（${MAX_PENDING_WAKEUPS}），等已登记的触发后再试。`,
         });
-      const { pid, note, taskId } = c.req.valid("json");
       const id = crypto.randomUUID();
       await db.insert(schema.agentWakeup).values({
         id,
