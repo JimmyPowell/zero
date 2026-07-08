@@ -1,7 +1,12 @@
 import { and, desc, eq, like, or, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
-import { enqueueTaskForIssue } from "@/lib/dispatch";
+import {
+  enqueueTaskForIssue,
+  fanOutMentions,
+  workspaceMentionAgents,
+} from "@/lib/dispatch";
+import { parseMentions } from "@/lib/mentions";
 import { notifyIssueEvent } from "@/lib/notify";
 
 // 共享 issue 动作层：HTTP 路由与「聊天指挥」(Telegram/企微) 共用同一份业务逻辑。
@@ -170,13 +175,18 @@ export async function getIssueBrief(workspaceId: string, issueId: string) {
   };
 }
 
-// 评论（触发被指派的 agent）。返回新事件 id。
+// 评论（触发被指派的 agent + @点名的 agent）。返回新事件 id。
+// 与 routes/issues.ts 的评论 handler 同一套 @mention 语义（chat/IM 渠道进来的也一致）。
 export async function addIssueComment(
   workspaceId: string,
   issueId: string,
   actorUserId: string,
   body: string,
 ): Promise<string> {
+  const mentions = parseMentions(
+    body,
+    await workspaceMentionAgents(workspaceId),
+  );
   const eventId = crypto.randomUUID();
   await db.insert(schema.issueEvent).values({
     id: eventId,
@@ -186,8 +196,33 @@ export async function addIssueComment(
     actorId: actorUserId,
     kind: "comment",
     body,
+    meta: mentions.length ? { mentions } : null,
   });
   await enqueueTaskForIssue(issueId, eventId);
+  if (mentions.length) {
+    // assignee 剔出 fan-out（上面已触发；避免未绑 runtime 时重复落 no_runtime 事件）
+    const [iss] = await db
+      .select({
+        assigneeType: schema.issue.assigneeType,
+        assigneeId: schema.issue.assigneeId,
+      })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, issueId))
+      .limit(1);
+    const fanout =
+      iss?.assigneeType === "agent" && iss.assigneeId
+        ? mentions.filter((m) => m !== iss.assigneeId)
+        : mentions;
+    if (fanout.length) {
+      await fanOutMentions({
+        issueId,
+        workspaceId,
+        eventId,
+        mentionAgentIds: fanout,
+        authorAgentId: null,
+      });
+    }
+  }
   return eventId;
 }
 

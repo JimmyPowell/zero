@@ -117,6 +117,8 @@ export function CommentComposer({
           }}
           onClick={(e) => detectMention(e.currentTarget)}
           onKeyDown={(e) => {
+            // 中文等 IME 组字期间的 Enter/↑↓ 是给输入法的（选字/上屏），不能被下拉接管
+            if (e.nativeEvent.isComposing) return;
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               void postComment();
               return;

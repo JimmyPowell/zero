@@ -17,7 +17,9 @@ export function highlightMentions(body: string, names: string[]): string {
   if (!body || names.length === 0 || !body.includes("@")) return body;
   const shadow = stripCodeSegments(body);
   const sorted = names
-    .filter((n) => n && n.trim().length > 0)
+    // 名字含 markdown 链接语法字符（[ ] `）时无法安全包成 [@名字](#mention)，跳过高亮
+    // （服务端解析/触发不受影响，纯展示降级）
+    .filter((n) => n && n.trim().length > 0 && !/[[\]`]/.test(n))
     .sort((a, b) => b.length - a.length);
   const ranges: { start: number; end: number }[] = [];
   let at = shadow.indexOf("@");

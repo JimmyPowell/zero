@@ -7,6 +7,7 @@ import {
   asc,
   desc,
   eq,
+  gt,
   inArray,
   isNull,
   lt,
@@ -279,6 +280,46 @@ export const daemonRoutes = new Hono<DaemonEnv>()
           ...(caps ? { capabilities: caps } : {}),
         })
         .where(eq(schema.runtime.id, rt.id));
+
+      // 启动对账：daemon 重启意味着它上一世代跑的 CLI 子进程已随进程树消亡，
+      // 遗留的 running 任务全是僵尸——不回收会永久占住「同 issue 串行」闸门与并发额度。
+      // 一个 runtime 只有一个 daemon（token 一对一），hello 时本进程还没开始 claim，
+      // 此刻该 runtime 名下的 running 只可能是残留。
+      const orphans = await db
+        .select()
+        .from(schema.task)
+        .where(
+          and(
+            eq(schema.task.runtimeId, rt.id),
+            eq(schema.task.status, "running"),
+          ),
+        );
+      for (const tk of orphans) {
+        const res = await db
+          .update(schema.task)
+          .set({
+            status: "failed",
+            finishedAt: new Date(),
+            error: "daemon 重启，任务中断",
+          })
+          .where(
+            and(eq(schema.task.id, tk.id), eq(schema.task.status, "running")),
+          );
+        const header = Array.isArray(res) ? res[0] : res;
+        if ((header as { affectedRows?: number })?.affectedRows !== 1) continue;
+        await db.insert(schema.issueEvent).values({
+          id: crypto.randomUUID(),
+          issueId: tk.issueId,
+          workspaceId: tk.workspaceId,
+          actorType: "agent",
+          actorId: tk.agentId,
+          kind: "run_failed",
+          body: "daemon 重启，任务中断",
+          meta: { taskId: tk.id, reason: "daemon_restart" },
+        });
+        publish(tk.id, { __end: true, status: "failed" });
+      }
+
       return c.json({
         runtimeId: rt.id,
         workspaceId: rt.workspaceId,
@@ -327,10 +368,18 @@ export const daemonRoutes = new Hono<DaemonEnv>()
     // 排除必须放进候选查询（而非取出后再筛）：否则最旧 5 条全被繁忙 issue 挡住时，
     // 后面本可跑的任务会被饿死。跨 runtime 同时 claim 有毫秒级竞态窗口，可接受
     // （docs/agent-mention-design.md §4.1）。
+    // 僵尸兜底：runtime 一去不返（机器下线）时 hello 对账不会发生，超 6h 的 running
+    // 视为异常残留、不再挡道——否则该 issue 的新任务会被永久锁死。
+    const STALE_RUNNING_MS = 6 * 3600_000;
     const runningIssues = await db
       .selectDistinct({ issueId: schema.task.issueId })
       .from(schema.task)
-      .where(eq(schema.task.status, "running"));
+      .where(
+        and(
+          eq(schema.task.status, "running"),
+          gt(schema.task.startedAt, new Date(Date.now() - STALE_RUNNING_MS)),
+        ),
+      );
     const busyIssueIds = runningIssues.map((r) => r.issueId);
 
     // 取最旧的若干排队任务，逐条用条件 UPDATE 抢占（并行认领下防重复领取）

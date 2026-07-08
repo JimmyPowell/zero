@@ -857,7 +857,11 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     const { body, attachmentIds } = c.req.valid("json");
 
     const [exists] = await db
-      .select({ id: schema.issue.id })
+      .select({
+        id: schema.issue.id,
+        assigneeType: schema.issue.assigneeType,
+        assigneeId: schema.issue.assigneeId,
+      })
       .from(schema.issue)
       .where(
         and(eq(schema.issue.id, id), eq(schema.issue.workspaceId, workspaceId)),
@@ -905,13 +909,18 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
 
     // 人在 agent-assigned issue 下评论 → 触发该 agent 继续执行（此时附件已 link，上下文能带上）
     await enqueueTaskForIssue(id, eventId);
-    // @ 点名的其他 agent 也各建一条 task（assignee 若同时被 @，由 (issue,agent) 去重合并）
-    if (mentions.length) {
+    // @ 点名的其他 agent 也各建一条 task。assignee 从 fan-out 名单里剔掉——上面那条已触发它，
+    // 不剔的话它未绑 runtime 时会连落两条 no_runtime 失败事件（时间线噪音）。
+    const fanout =
+      exists.assigneeType === "agent" && exists.assigneeId
+        ? mentions.filter((m) => m !== exists.assigneeId)
+        : mentions;
+    if (fanout.length) {
       await fanOutMentions({
         issueId: id,
         workspaceId,
         eventId,
-        mentionAgentIds: mentions,
+        mentionAgentIds: fanout,
         authorAgentId: null,
       });
     }
@@ -1080,7 +1089,13 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
       kind: "run_cancelled",
       meta: { taskId },
     });
-    // 连带取消该 issue 待触发的自唤醒（停就停干净）
+    // 连带取消该 issue 待触发的自唤醒（停就停干净）。
+    // 只清被取消 task 对应 agent 的——多 agent 参与同一 issue 后，别把其他 agent 的续跑链误杀。
+    const [ctk] = await db
+      .select({ agentId: schema.task.agentId })
+      .from(schema.task)
+      .where(eq(schema.task.id, taskId))
+      .limit(1);
     await db
       .update(schema.agentWakeup)
       .set({ status: "cancelled", firedAt: new Date() })
@@ -1088,6 +1103,7 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         and(
           eq(schema.agentWakeup.issueId, id),
           eq(schema.agentWakeup.status, "pending"),
+          ctk ? eq(schema.agentWakeup.agentId, ctk.agentId) : undefined,
         ),
       );
     // 通知订阅中的 SSE 立即收尾（执行日志面板即时显示已取消）
