@@ -140,7 +140,7 @@ session 按 **(agent, issue)** 一条，所以 @ agent B：
 - 但 push 会把 issue + 最近评论（**含 A 的发言**，同一条时间线）塞给 B → B 看得到来龙去脉；还能 pull 看 A 的运行/更早评论。
 - 即：**一个 issue 下多 agent = 多条平行 session，共享同一条 issue 时间线当上下文。**
 
-⚠️ 现状：评论只触发该 issue 的 **assignee** agent（`enqueueTaskForIssue` 走 `assigneeId`）；@-mention 点名别的 agent **尚未接线**，但数据模型（session per (agent,issue)）天然支持，将来加只是"解析 @ → 给被点 agent 也建 task"。
+⚠️ 现状：评论只触发该 issue 的 **assignee** agent（`enqueueTaskForIssue` 走 `assigneeId`）；@-mention 点名别的 agent **尚未接线**，但数据模型（session per (agent,issue)）天然支持，将来加只是"解析 @ → 给被点 agent 也建 task"。落地方案（含 multica @mention/跨运行时实现调查）见 [agent-mention-design.md](./agent-mention-design.md)（ZERO-74）。
 
 ## 7. 缓存命中与 token 成本（实测）
 
