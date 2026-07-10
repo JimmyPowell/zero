@@ -772,7 +772,14 @@ export const api = {
       body: fd,
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    let data: { error?: string } | null = null;
+    if (text) {
+      try {
+        data = JSON.parse(text) as { error?: string };
+      } catch {
+        // HTTP 层（而非业务路由）拒绝请求时，响应不一定是 JSON。
+      }
+    }
     if (!res.ok)
       throw new ApiError(res.status, (data?.error as string) ?? "上传失败");
     return data as { attachment: Attachment };

@@ -19,6 +19,7 @@ import {
   attachmentRoutes,
   attachmentDownloadRoutes,
 } from "@/routes/attachments";
+import { ATTACH_REQUEST_MAX_BYTES } from "@/lib/storage";
 import { startOutboxWorker } from "@/lib/outbox";
 import { startWakeupWorker } from "@/lib/continuation";
 import { startWecomBot } from "@/lib/channels/wecom-bot";
@@ -66,5 +67,6 @@ console.log(`Zero server listening on http://localhost:${config.port}`);
 
 export default {
   port: config.port,
+  maxRequestBodySize: ATTACH_REQUEST_MAX_BYTES,
   fetch: app.fetch,
 };

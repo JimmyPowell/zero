@@ -10,10 +10,16 @@ import { config } from "@/config";
 export const ATTACH_DIR =
   process.env.ATTACHMENTS_DIR ?? join(process.cwd(), "data/uploads");
 
-// 单文件上限（默认 25MB）。注意 Cloudflare 边缘对上传体积有限制，大文件需直连 origin。
-export const ATTACH_MAX_BYTES = Number(
-  process.env.ATTACH_MAX_BYTES ?? 25 * 1024 * 1024,
-);
+// 单文件上限（默认 100MiB）。注意 Cloudflare 边缘对上传体积有限制，大文件需直连 origin。
+export const DEFAULT_ATTACH_MAX_BYTES = 100 * 1024 * 1024;
+const configuredMaxBytes = Number(process.env.ATTACH_MAX_BYTES);
+export const ATTACH_MAX_BYTES =
+  Number.isSafeInteger(configuredMaxBytes) && configuredMaxBytes > 0
+    ? configuredMaxBytes
+    : DEFAULT_ATTACH_MAX_BYTES;
+
+// Bun 会在 Hono 解析 multipart 之前执行请求体限制；给边界、文件名等 multipart 元数据留出余量。
+export const ATTACH_REQUEST_MAX_BYTES = ATTACH_MAX_BYTES + 1024 * 1024;
 
 export function storageKey(
   workspaceId: string,

@@ -5,8 +5,15 @@ import {
 } from "react";
 import { Paperclip, X } from "lucide-react";
 
-import { api, attachmentUrl, type Attachment } from "@/lib/api-client";
+import {
+  api,
+  ApiError,
+  attachmentUrl,
+  type Attachment,
+} from "@/lib/api-client";
 import { useDraftState } from "@/lib/drafts";
+import { toast } from "@/lib/toast-store";
+import { useUi } from "@/lib/ui-store";
 import {
   ImageLightbox,
   type LightboxImage,
@@ -27,6 +34,7 @@ export function useAttachmentComposer(
   workspaceId: string | null | undefined,
   persistKey?: string,
 ) {
+  const { t } = useUi();
   const [pending, setPending] = useDraftState<Attachment[]>(
     persistKey ?? "",
     [],
@@ -44,8 +52,16 @@ export function useAttachmentComposer(
         try {
           const { attachment } = await api.uploadAttachment(workspaceId, file);
           setPending((prev) => [...prev, attachment]);
-        } catch {
-          /* 单个失败忽略，继续传其余 */
+        } catch (err) {
+          // 单个失败不阻断其它文件，但必须让用户看见服务端返回的原因（例如体积上限）。
+          toast.error({
+            title: t("toast.attachmentUploadFailed"),
+            description: `${file.name}: ${
+              err instanceof ApiError
+                ? err.message
+                : t("detail.uploadFailedNetwork")
+            }`,
+          });
         }
       }
     } finally {

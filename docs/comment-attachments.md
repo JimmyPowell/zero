@@ -38,13 +38,13 @@
 `attachment` 表：`id / workspaceId / issueId(FK cascade) / issueEventId(评论, 可空, FK cascade) / uploaderType+Id / filename / mime / sizeBytes / storageKey / createdAt`（迁移 **0017**）。先上传（未 link，issueEventId 空），发评论时按 `attachmentIds` link 到该评论。
 
 ### 存储
-本地磁盘，配置 `ATTACHMENTS_DIR`（dev=`<server>/data/uploads`，已 gitignore `data/`；prod=VPS 路径）。key=`workspaces/{ws}/{uuid}{ext}`。单文件上限 **25MB**（`ATTACH_MAX_BYTES`）。mime 存**客户端上报值**（未做 magic-byte 嗅探，见取舍）。
+本地磁盘，配置 `ATTACHMENTS_DIR`（dev=`<server>/data/uploads`，已 gitignore `data/`；prod=VPS 路径）。key=`workspaces/{ws}/{uuid}{ext}`。单文件上限默认 **100MiB**（`ATTACH_MAX_BYTES` 可覆盖）。mime 存**客户端上报值**（未做 magic-byte 嗅探，见取舍）。
 
 ### 签名下载（仅签名，不需登录）
 `GET /attachments/:id?exp=<ts>&sig=<hmac>`——HMAC（jwtSecret 对 `id.exp` 签，取 32 hex）。浏览器 `<img>`/下载 与 daemon 拉取**都用签名 URL**，服务端在各响应里临时签发（不暴露长期令牌）。安全：**非图片强制 `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff`**；过期/篡改 → 403。
 
 ### Server API
-- `POST /workspaces/:ws/attachments`（multipart，成员鉴权，25MB 上限）→ 存盘 + 入表（未 link）→ 返回 `{id, filename, mime, size, url(签名,24h)}`。
+- `POST /workspaces/:ws/attachments`（multipart，成员鉴权，默认 100MiB 上限）→ 存盘 + 入表（未 link）→ 返回 `{id, filename, mime, size, url(签名,24h)}`。
 - `commentSchema` 加 `attachmentIds: string[]`（body 与附件至少有一个）；发评论时把本工作空间内、尚未 link 的这些附件 link 到该评论。
 - `GET /attachments/:id` 签名流式返回。
 - 评论列表（`GET /:id/events`）每条评论带 `attachments`；**claim 上下文（`assembleContext`）** 带每个附件的元数据 + `signedPath`（daemon 据 size 自行决定小推/大拉）。
@@ -75,7 +75,7 @@
 | **服务端磁盘文件随删** | 级联只删了 DB 行，`ATTACHMENTS_DIR` 里的文件会**残留累积**。已知缺口，后续在删除钩子里补 `rm`（或定时清扫）。 |
 | **孤儿附件清理** | 上传了但没提交评论的附件（`issueEventId` 空）目前不自动清。低频、占用小，后续加 TTL 清扫。 |
 | **拖拽 / 粘贴上传** | 先把"点按钮上传"闭环跑通；拖拽、粘贴图片是 UX 增强，后续加。 |
-| **配额 / workspace 限额** | 暂无单文件 25MB 之外的限额。 |
+| **配额 / workspace 限额** | 暂无单文件 100MiB 之外的限额。 |
 | **PDF 等转文本（服务端抽取）** | **不需要**——agent 自己会用 Read/Bash 读文件，不必服务端预抽取。 |
 | **图片走 vision content block** | 按 provider 各异、复杂；统一落盘给路径，由 CLI 的图片 Read 能力决定能否"看懂"。 |
 | **mime 嗅探** | 存的是客户端上报 mime；已用 `nosniff` + 非图片强制下载 + API 独立源 兜底安全，先不做 magic-byte 嗅探。 |
