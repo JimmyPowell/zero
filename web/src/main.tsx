@@ -4,6 +4,7 @@ import {
   createBrowserRouter,
   RouterProvider,
   Navigate,
+  useLocation,
 } from "react-router-dom";
 
 import "@/styles/index.css";
@@ -22,14 +23,18 @@ import { TrashView } from "@/views/TrashView";
 import { RuntimesView } from "@/views/RuntimesView";
 import { RuntimeDetailView } from "@/views/RuntimeDetailView";
 import { SettingsView } from "@/views/SettingsView";
+import { MembersView } from "@/views/MembersView";
+import { InviteAcceptView } from "@/views/InviteAcceptView";
 import { AuthView } from "@/views/AuthView";
 import { useAuth, restoreAuth } from "@/lib/auth-store";
 
 let restoreStarted = false;
 
-/** /auth 页：已登录则回首页；否则展示登录注册 */
+/** /auth 页：已登录则回来源页（如邀请链接）或首页；否则展示登录注册 */
 function AuthRoute() {
   const { status } = useAuth();
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from;
 
   useEffect(() => {
     if (!restoreStarted) {
@@ -46,13 +51,14 @@ function AuthRoute() {
     );
   }
   if (status === "authenticated") {
-    return <Navigate to="/" replace />;
+    return <Navigate to={from ?? "/"} replace />;
   }
   return <AuthView />;
 }
 
 const router = createBrowserRouter([
   { path: "/auth", element: <AuthRoute /> },
+  { path: "/invite/:token", element: <InviteAcceptView /> },
   {
     path: "/",
     element: (
@@ -75,6 +81,7 @@ const router = createBrowserRouter([
       { path: "skills", element: <SkillsView /> },
       { path: "automation", element: <AutomationView /> },
       { path: "trash", element: <TrashView /> },
+      { path: "members", element: <MembersView /> },
       { path: "settings", element: <SettingsView /> },
       { path: "*", element: <Navigate to="/requirements" replace /> },
     ],

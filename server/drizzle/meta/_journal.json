@@ -197,6 +197,13 @@
       "when": 1782816550216,
       "tag": "0027_cultured_lionheart",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "5",
+      "when": 1783739473984,
+      "tag": "0028_rare_serpent_society",
+      "breakpoints": true
     }
   ]
 }

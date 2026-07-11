@@ -27,3 +27,25 @@ export const requireWorkspaceMember = createMiddleware<WorkspaceEnv>(
     await next();
   },
 );
+
+// 需 owner/admin：叠在 requireWorkspaceMember 之后（读 c.get("member")）
+export const requireWorkspaceAdmin = createMiddleware<WorkspaceEnv>(
+  async (c, next) => {
+    const member = c.get("member");
+    if (!member || (member.role !== "owner" && member.role !== "admin")) {
+      return c.json({ error: "需要管理员权限" }, 403);
+    }
+    await next();
+  },
+);
+
+// 需 owner：叠在 requireWorkspaceMember 之后（角色变更等仅所有者可为）
+export const requireWorkspaceOwner = createMiddleware<WorkspaceEnv>(
+  async (c, next) => {
+    const member = c.get("member");
+    if (!member || member.role !== "owner") {
+      return c.json({ error: "仅工作空间所有者可执行此操作" }, 403);
+    }
+    await next();
+  },
+);

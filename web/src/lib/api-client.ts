@@ -78,6 +78,37 @@ export interface Member {
   role: "owner" | "admin" | "member";
 }
 
+export type InviteRole = "admin" | "member";
+export type InviteStatus = "active" | "revoked" | "expired" | "used_up";
+
+export interface WorkspaceInvite {
+  id: string;
+  role: InviteRole;
+  email: string | null;
+  expiresAt: string | null;
+  maxUses: number | null;
+  useCount: number;
+  revokedAt: string | null;
+  createdAt: string;
+  createdByName: string | null;
+  status: InviteStatus;
+}
+
+export interface CreateInvitePayload {
+  role: InviteRole;
+  expiresInDays?: number;
+  maxUses?: number;
+}
+
+export interface InvitePreview {
+  valid: boolean;
+  reason?: "not_found" | "revoked" | "expired" | "used_up";
+  role: InviteRole | null;
+  workspace: { id: string; name: string; slug: string } | null;
+  inviterName: string | null;
+  alreadyMember: boolean;
+}
+
 export type IssueStatus =
   | "backlog"
   | "todo"
@@ -679,6 +710,44 @@ export const api = {
   // ---- 成员 ----
   listMembers: (workspaceId: string) =>
     request<{ members: Member[] }>(`/workspaces/${workspaceId}/members`),
+
+  updateMemberRole: (workspaceId: string, userId: string, role: InviteRole) =>
+    request<{ ok: boolean; member: { userId: string; role: InviteRole } }>(
+      `/workspaces/${workspaceId}/members/${userId}`,
+      { method: "PATCH", body: { role } },
+    ),
+
+  removeMember: (workspaceId: string, userId: string) =>
+    request<{ ok: boolean }>(
+      `/workspaces/${workspaceId}/members/${userId}`,
+      { method: "DELETE" },
+    ),
+
+  // ---- 邀请 ----
+  listInvites: (workspaceId: string) =>
+    request<{ invites: WorkspaceInvite[] }>(
+      `/workspaces/${workspaceId}/invites`,
+    ),
+
+  createInvite: (workspaceId: string, payload: CreateInvitePayload) =>
+    request<{ invite: WorkspaceInvite; token: string; url: string }>(
+      `/workspaces/${workspaceId}/invites`,
+      { method: "POST", body: payload },
+    ),
+
+  revokeInvite: (workspaceId: string, id: string) =>
+    request<{ ok: boolean }>(`/workspaces/${workspaceId}/invites/${id}`, {
+      method: "DELETE",
+    }),
+
+  previewInvite: (token: string) =>
+    request<InvitePreview>(`/invites/${encodeURIComponent(token)}`),
+
+  acceptInvite: (token: string) =>
+    request<{ joined: boolean; workspace: Workspace }>(
+      `/invites/${encodeURIComponent(token)}/accept`,
+      { method: "POST", body: {} },
+    ),
 
   // ---- 需求（issue）----
   listIssues: (workspaceId: string, params?: { status?: IssueStatus; assignee?: string }) => {

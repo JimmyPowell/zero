@@ -13,6 +13,10 @@ const createSchema = z.object({
   description: z.string().trim().max(280).optional(),
 });
 
+const roleSchema = z.object({
+  role: z.enum(["admin", "member"]),
+});
+
 export const workspaceRoutes = new Hono<AuthEnv>()
   .use(requireAuth)
   // 我加入的工作空间列表
@@ -94,4 +98,57 @@ export const workspaceRoutes = new Hono<AuthEnv>()
       },
       201,
     );
+  })
+  // 修改成员角色（仅 owner）：admin ↔ member，不能动 owner
+  .patch("/:wsId/members/:userId", zValidator("json", roleSchema), async (c) => {
+    const { sub } = c.get("user");
+    const wsId = c.req.param("wsId");
+    const targetUserId = c.req.param("userId");
+    const { role } = c.req.valid("json");
+
+    const self = await getMembership(sub, wsId);
+    if (!self) return c.json({ error: "无权访问该工作空间" }, 403);
+    if (self.role !== "owner")
+      return c.json({ error: "仅工作空间所有者可修改成员角色" }, 403);
+
+    const target = await getMembership(targetUserId, wsId);
+    if (!target) return c.json({ error: "该成员不存在" }, 404);
+    if (target.role === "owner")
+      return c.json({ error: "不能修改所有者的角色" }, 400);
+
+    await db
+      .update(schema.member)
+      .set({ role })
+      .where(eq(schema.member.id, target.id));
+    return c.json({ ok: true, member: { userId: targetUserId, role } });
+  })
+  // 移除成员（owner/admin）或主动退出（本人）。护栏：不能移除 owner；admin 不能移除 admin。
+  .delete("/:wsId/members/:userId", async (c) => {
+    const { sub } = c.get("user");
+    const wsId = c.req.param("wsId");
+    const targetUserId = c.req.param("userId");
+
+    const self = await getMembership(sub, wsId);
+    if (!self) return c.json({ error: "无权访问该工作空间" }, 403);
+
+    const target = await getMembership(targetUserId, wsId);
+    if (!target) return c.json({ error: "该成员不存在" }, 404);
+
+    const isSelf = targetUserId === sub;
+    if (isSelf) {
+      // 主动退出：owner 需先转让所有权
+      if (self.role === "owner")
+        return c.json({ error: "所有者需先转让所有权后才能退出" }, 400);
+    } else {
+      // 移除他人：需 owner/admin
+      if (self.role !== "owner" && self.role !== "admin")
+        return c.json({ error: "需要管理员权限" }, 403);
+      if (target.role === "owner")
+        return c.json({ error: "不能移除工作空间所有者" }, 400);
+      if (self.role === "admin" && target.role === "admin")
+        return c.json({ error: "管理员不能移除其他管理员" }, 403);
+    }
+
+    await db.delete(schema.member).where(eq(schema.member.id, target.id));
+    return c.json({ ok: true });
   });

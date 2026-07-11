@@ -57,6 +57,35 @@ export const member = mysqlTable(
   ],
 );
 
+// 工作空间邀请：owner/admin 生成一条可分享的邀请（→ 链接 /invite/<token>）。
+// token 明文只在创建时返回一次；库里只存 sha256(token)（同 runtime 配对令牌）。
+// 校验口径：未撤销(revokedAt 空) + 未过期(expiresAt 空或 > now) + 未用满(maxUses 空或 useCount < maxUses)。
+// email 预留定向邀请（null = 开放链接，谁拿到都能用）；role 只允许 admin/member（owner 仅建空间/转让产生）。
+export const workspaceInvite = mysqlTable(
+  "workspace_invite",
+  {
+    id: char("id", { length: 36 }).primaryKey(),
+    workspaceId: char("workspace_id", { length: 36 })
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    role: mysqlEnum("role", ["admin", "member"]).notNull().default("member"),
+    tokenHash: char("token_hash", { length: 64 }).notNull().unique(), // sha256(token) hex
+    email: varchar("email", { length: 255 }), // 预留：定向邀请（null = 开放链接）
+    createdBy: char("created_by", { length: 36 }).references(() => user.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: timestamp("expires_at"), // null = 永不过期
+    maxUses: int("max_uses"), // null = 不限次数
+    useCount: int("use_count").notNull().default(0),
+    revokedAt: timestamp("revoked_at"), // 非空 = 已撤销
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_invite_workspace").on(t.workspaceId),
+    index("idx_invite_token").on(t.tokenHash),
+  ],
+);
+
 // 需求（issue）：一个真实开发任务，可指派给成员或（后续）智能体
 export const issue = mysqlTable(
   "issue",
@@ -808,6 +837,7 @@ export const kbDoc = mysqlTable(
 export type User = typeof user.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
+export type WorkspaceInvite = typeof workspaceInvite.$inferSelect;
 export type Issue = typeof issue.$inferSelect;
 export type Repo = typeof repo.$inferSelect;
 export type Project = typeof project.$inferSelect;
