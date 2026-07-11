@@ -5,6 +5,7 @@ import { logger } from "hono/logger";
 import { config } from "@/config";
 import { authRoutes } from "@/routes/auth";
 import { workspaceRoutes } from "@/routes/workspaces";
+import { workspaceInviteRoutes, inviteAcceptRoutes } from "@/routes/invites";
 import { issueRoutes } from "@/routes/issues";
 import { repoRoutes } from "@/routes/repos";
 import { projectRoutes } from "@/routes/projects";
@@ -40,6 +41,8 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 app.route("/auth", authRoutes);
 app.route("/workspaces", workspaceRoutes);
+app.route("/workspaces/:wsId/invites", workspaceInviteRoutes);
+app.route("/invites", inviteAcceptRoutes);
 app.route("/workspaces/:wsId/issues", issueRoutes);
 app.route("/workspaces/:wsId/repos", repoRoutes);
 app.route("/workspaces/:wsId/projects", projectRoutes);

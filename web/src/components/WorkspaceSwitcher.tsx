@@ -1,4 +1,5 @@
-import { ChevronDown, Check, Plus, LogOut } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ChevronDown, Check, Plus, LogOut, Users } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -18,6 +19,7 @@ export function WorkspaceSwitcher({
   onCreateWorkspace: () => void;
 }) {
   const { t } = useUi();
+  const navigate = useNavigate();
   const { user, workspaces, currentWorkspace, selectWorkspace, logout } =
     useAuth();
 
@@ -86,6 +88,16 @@ export function WorkspaceSwitcher({
           <Plus />
           {t("workspace.create")}
         </DropdownMenuItem>
+
+        {currentWorkspace && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => navigate("/members")}>
+              <Users />
+              {t("workspace.members")}
+            </DropdownMenuItem>
+          </>
+        )}
 
         <DropdownMenuSeparator />
 
