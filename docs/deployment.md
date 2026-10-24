@@ -45,7 +45,7 @@ zero-daemon start --server https://zero.你的域名.com --token <运行时令�
 
 1. **HTTPS 强制**（同上）。
 2. server 域名要 DNS + TLS 可达。
-3. **8799 文件夹选择器是本机限定**（`127.0.0.1`）：它给「和 daemon 同机的浏览器」弹原生选目录用。跨机器时只有在 daemon 那台机器上开浏览器才能用「浏览」；远程访问就手填路径。这是原生选择器的天然限制，不是通信问题。
+3. **「浏览」执行机目录走控制平面中继**：网页点「浏览」→ server `GET /workspaces/:ws/runtimes/:id/fs` → daemon 长轮询 `POST /daemon/rpc/poll` 领取、本地列目录后回传（`lib/runtime-rpc.ts`）。仍是 daemon 只出站，浏览器与 daemon 不必同机，经公网域名也能用。中继状态在 server 内存里，按单实例设计。（原 8799 本机原生选择器只支持 macOS，已移除。）
 4. 生产前必做：换 `JWT_SECRET`、换 MySQL 强口令（见各 `.env.example`）。
 
 ## 容器化部署（docker-compose）⏳待办（设计已定，暂不实现）

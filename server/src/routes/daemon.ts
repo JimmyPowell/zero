@@ -33,6 +33,7 @@ import { incomingRunEventSchema } from "@/lib/run-events";
 import { publish } from "@/lib/run-bus";
 import { notifyIssueEvent } from "@/lib/notify";
 import { searchKnowledge, writeDoc } from "@/lib/kb";
+import { pollRequests, resolveRequest } from "@/lib/runtime-rpc";
 
 // 变更可视化：一次 run 的改动协议（/complete 与 /fail 共用）
 const changesSchema = z
@@ -264,8 +265,26 @@ async function pendingWakeupCount(issueId: string): Promise<number> {
   return Number(r?.n ?? 0);
 }
 
+// 即时请求中继的回传体（见 lib/runtime-rpc.ts）
+const rpcResultSchema = z.union([
+  z.object({ ok: z.literal(true), data: z.unknown() }),
+  z.object({ ok: z.literal(false), error: z.string().max(2000) }),
+]);
+
 export const daemonRoutes = new Hono<DaemonEnv>()
   .use(requireRuntimeToken)
+  // 即时请求（如浏览目录）长轮询：最多挂起 8s（低于 Bun 默认 10s 空闲超时），daemon 收到即再拉
+  .post("/rpc/poll", async (c) => {
+    const rt = c.get("runtime");
+    const requests = await pollRequests(rt.id, 8_000, c.req.raw.signal);
+    return c.json({ requests });
+  })
+  .post("/rpc/:id/result", zValidator("json", rpcResultSchema), async (c) => {
+    const rt = c.get("runtime");
+    const accepted = resolveRequest(rt.id, c.req.param("id"), c.req.valid("json"));
+    // 发起方已超时离开时 accepted=false，daemon 无需处理
+    return c.json({ accepted });
+  })
   // daemon 启动：上报能力 + 刷新心跳
   .post(
     "/hello",

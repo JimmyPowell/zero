@@ -16,8 +16,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { createPatch } from "diff";
 
@@ -32,7 +33,6 @@ const HEARTBEAT_MS = 20_000;
 const CLAIM_MS = 5_000;
 const WATCH_MS = 5_000; // 进程看护探活周期（自触发续跑）
 const CANCEL_POLL_MS = 3_000; // 跑任务期间轮询「是否被取消」的周期
-const PICKER_PORT = 8799; // 本地文件夹选择器（仅 127.0.0.1）
 const ZERO_DIR = join(homedir(), ".zero");
 const PID_FILE = join(ZERO_DIR, "daemon.pid");
 const LOG_FILE = join(ZERO_DIR, "daemon.log");
@@ -767,53 +767,96 @@ async function prepareWorkdir(work: WorkSpec, issueId: string): Promise<string> 
   return worktreePath;
 }
 
-// ---- 本地文件夹选择器（仅供本机网页调用，弹原生对话框选目录）----
+// ---- 即时请求（浏览器 → server → daemon 中继，见 server lib/runtime-rpc.ts）----
+// 与 5s 认领循环独立：长轮询 /daemon/rpc/poll 领请求，本地执行后回传结果。
 
-async function pickFolder(): Promise<string | null> {
-  if (process.platform !== "darwin") return null; // 目前仅 macOS
-  const proc = Bun.spawn({
-    cmd: [
-      "osascript",
-      "-e",
-      'POSIX path of (choose folder with prompt "选择工作目录")',
-    ],
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-  const out = (await new Response(proc.stdout).text()).trim();
-  const code = await proc.exited;
-  if (code !== 0 || !out) return null; // 用户取消
-  return out.replace(/\/$/, ""); // 去掉尾部斜杠
+interface RpcRequest {
+  id: string;
+  op: string;
+  args: Record<string, unknown>;
 }
 
-function startPicker() {
-  const cors: Record<string, string> = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "*",
-  };
+const FS_LIST_MAX = 1000; // 单目录最多返回的子目录数
+
+// 列出某目录下的子目录（选「工作目录就地」用）：只给名字，不读文件内容。
+// 空路径 → 主目录；支持 ~ 开头；隐藏目录（. 开头）默认不列。
+async function fsList(args: Record<string, unknown>) {
+  const home = homedir();
+  let p = String(args.path ?? "").trim() || home;
+  if (p === "~" || p.startsWith("~/")) p = join(home, p.slice(1));
+  if (!isAbsolute(p)) throw new Error("请输入绝对路径（以 / 或 ~ 开头）");
+  p = resolve(p);
+
+  let ents;
   try {
-    Bun.serve({
-      port: PICKER_PORT,
-      hostname: "127.0.0.1",
-      idleTimeout: 255, // 选目录可能停留较久
-      async fetch(req) {
-        if (req.method === "OPTIONS")
-          return new Response(null, { headers: cors });
-        const url = new URL(req.url);
-        if (url.pathname === "/pick-folder") {
-          const path = await pickFolder();
-          return Response.json({ path }, { headers: cors });
-        }
-        return new Response("zero-daemon picker", { headers: cors });
-      },
-    });
-    console.log(`本地选择器：http://127.0.0.1:${PICKER_PORT}`);
+    ents = await readdir(p, { withFileTypes: true });
   } catch (err) {
-    console.error(
-      `选择器启动失败（手动输入路径仍可用）：${(err as Error).message}`,
-    );
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw new Error(`目录不存在：${p}`);
+    if (code === "ENOTDIR") throw new Error(`不是目录：${p}`);
+    if (code === "EACCES" || code === "EPERM")
+      throw new Error(`没有权限读取：${p}`);
+    throw err;
+  }
+
+  const names: string[] = [];
+  for (const e of ents) {
+    if (!args.hidden && e.name.startsWith(".")) continue;
+    let isDir = e.isDirectory();
+    // 指向目录的软链接也算目录（如 ~/code → /mnt/d/code）
+    if (!isDir && e.isSymbolicLink()) {
+      isDir = await stat(join(p, e.name))
+        .then((st) => st.isDirectory())
+        .catch(() => false);
+    }
+    if (isDir) names.push(e.name);
+  }
+  names.sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+  );
+
+  return {
+    path: p,
+    parent: p === "/" ? null : dirname(p),
+    home,
+    isRepo: existsSync(join(p, ".git")),
+    truncated: names.length > FS_LIST_MAX,
+    entries: names.slice(0, FS_LIST_MAX).map((name) => ({
+      name,
+      isRepo: existsSync(join(p, name, ".git")),
+    })),
+  };
+}
+
+async function handleRpc(server: string, token: string, req: RpcRequest) {
+  let result: { ok: true; data: unknown } | { ok: false; error: string };
+  try {
+    if (req.op !== "fs.list") throw new Error(`不支持的请求：${req.op}`);
+    result = { ok: true, data: await fsList(req.args ?? {}) };
+  } catch (err) {
+    result = { ok: false, error: (err as Error).message };
+  }
+  try {
+    await post(server, token, `/daemon/rpc/${req.id}/result`, result);
+  } catch {
+    /* 发起方已超时离开，忽略 */
+  }
+}
+
+async function rpcLoop(server: string, token: string) {
+  for (;;) {
+    try {
+      const { requests } = await post<{ requests: RpcRequest[] }>(
+        server,
+        token,
+        "/daemon/rpc/poll",
+        {},
+      );
+      for (const r of requests) void handleRpc(server, token, r);
+    } catch (err) {
+      // 服务端版本过旧（404）就慢点重试，网络抖动 3s 后再连
+      await Bun.sleep(/→ 404/.test((err as Error).message) ? 60_000 : 3_000);
+    }
   }
 }
 
@@ -1977,7 +2020,7 @@ async function worker() {
     `已连接：${info.name}（runtime ${info.runtimeId}）· 并发上限 ${maxConcurrency}`,
   );
 
-  startPicker(); // 本地文件夹选择器
+  void rpcLoop(server, token); // 即时请求（网页浏览本机目录等）
 
   const hb = setInterval(async () => {
     try {

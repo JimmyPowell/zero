@@ -607,6 +607,11 @@ export function IssueDetailView() {
           <BindingPicker
             workspaceId={wsId!}
             issueNumber={issue.number}
+            runtimeId={
+              issue.assignee?.type === "agent"
+                ? agents.find((x) => x.id === issue.assignee!.id)?.runtimeId
+                : null
+            }
             value={
               issue.repo
                 ? {

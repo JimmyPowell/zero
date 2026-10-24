@@ -2,6 +2,18 @@
 
 > 每完成一块开发 / 有重要进展就在最上面追加一条（倒序）。日期用绝对日期。
 
+## 2026-10-24 · 开放注册开关 + 网页浏览执行机目录 + 本机 WSL 常驻部署
+
+- **部署适配**：daemon 新增 `ZERO_CLAUDE_LAUNCHER`（如 `hicc run`），经包装器启动 claude；前端支持
+  `VITE_API_BASE=/api` 同源反代（新建运行时弹窗里的 `--server` 按当前域名补全）。
+- **开放注册开关**（LAPD ZERO-WB）：新表 `system_setting` + `user.is_admin`（迁移 0029 把最早注册的用户设为
+  系统管理员）。`registration_open` 无记录视为开放、读时不缓存（改库立即生效）。关闭后 `/auth/register`
+  只放行带有效邀请 token 的注册；登录页隐藏注册入口；设置页新增「系统」分组（仅系统管理员）。
+- **工作目录「浏览」重做**（LAPD ZERO-WB）：原 8799 本机选择器只支持 macOS，在 Linux/WSL 上点了没反应。
+  改为网页内目录浏览对话框（进入下级 / 面包屑与上一级返回 / 输入路径跳转 / 标出 Git 仓库 / 可显示隐藏目录），
+  链路 浏览器 → server `GET /runtimes/:id/fs` → daemon 长轮询 `/daemon/rpc/poll` 领取并回传
+  （`server/src/lib/runtime-rpc.ts`），浏览器与 daemon 不必同机。默认浏览指派智能体所绑的运行时。
+
 ## 2026-06-28 · 多 Provider 完善 P3：技能跨 provider 物化（main 1914ab5）🧩
 
 落地 [provider-skills-mounting.md](./provider-skills-mounting.md) §2.1：`materializeSkills` 从写死

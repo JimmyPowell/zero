@@ -97,7 +97,7 @@ e2e（`daemon/test-change-tracker.ts`）覆盖 git/脏树/影子库/纯 JS 共 2
 ## 三、B2 只读在线文件浏览（浏览整棵 worktree）
 
 - **不用** Monaco/code-server（重、是编辑器，只读用不上）。**server 端 Shiki 高亮成静态 HTML，按 blob SHA 缓存**，前端注入——客户端零编辑器负担、VS Code 级保真。超大单文件再退化 **CodeMirror 6 minimal**（~75KB gzip、原生虚拟滚动）。
-- **后端落点（注意）**：worktree 在 **daemon 侧**（server 无 fs 访问）。两条路：① daemon 暴露只读 file/tree API（daemon 已有本地 HTTP 服务 `startPicker` 127.0.0.1:8799 可扩展）；② daemon→server 同步树/blob。读 `git ls-tree` / `git show <sha>:<path>` / 直接读 `~/.zero/worktrees/<issueId>`。
+- **后端落点（注意）**：worktree 在 **daemon 侧**（server 无 fs 访问）。两条路：① daemon 暴露只读 file/tree API（8799 本机服务已移除；现可复用浏览目录用的 server↔daemon 长轮询中继 `lib/runtime-rpc.ts`，加 op 即可，跨机器也通）；② daemon→server 同步树/blob。读 `git ls-tree` / `git show <sha>:<path>` / 直接读 `~/.zero/worktrees/<issueId>`。
 - **安全（关键，呼应"绝不提交 .env"）**：`path.resolve` + `realpath` 双重夹紧到 worktree 根；`.git`/点文件/`.env`/密钥走**独立 denylist**（gitignore 只挡提交、挡不住服务端读盘，agent 写出的 `.env` 仍在 worktree）；大小上限；按 workspace 鉴权（防 BOLA 越权）。
 
 ## 四、选型小结
@@ -131,8 +131,8 @@ e2e（`daemon/test-change-tracker.ts`）覆盖 git/脏树/影子库/纯 JS 共 2
 
 ### 6.2 B2 只读在线文件浏览（浏览整棵 worktree）
 
-- **同机（dev / daemon 与浏览器同机）**：复用 daemon 已有本地 HTTP（`startPicker` 127.0.0.1:8799，前端
-  已直连它选目录）扩 `/tree?issueId=&path=` + `/file?issueId=&path=`：`git ls-tree` / `git show <sha>:<path>`
+- **同机（dev / daemon 与浏览器同机）**：原设想复用 daemon 本地 HTTP（127.0.0.1:8799，已于 2026-10-24 移除）；
+  现改为在 server↔daemon 中继（`lib/runtime-rpc.ts`）上加 op扩 `/tree?issueId=&path=` + `/file?issueId=&path=`：`git ls-tree` / `git show <sha>:<path>`
   / 直接读 worktree。**安全（关键）**：`realpath` 双重夹紧到 worktree 根；`.git`/`.env`/密钥独立 denylist
   （gitignore 挡提交、挡不住服务端读盘）；大小上限；按 workspace 鉴权。
 - **跨机（daemon 在内网 / NAT 后，server 够不着 daemon）**：唯一可行是 **daemon→server 推**（树/blob 同步，
