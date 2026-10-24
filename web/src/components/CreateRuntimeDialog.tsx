@@ -21,9 +21,15 @@ import {
   type RuntimeVisibility,
 } from "@/lib/api-client";
 
-const API_BASE =
+// daemon 的 --server 必须是完整地址：VITE_API_BASE 配成同源相对路径（如 /api，经反代转给 server）时，
+// 按当前访问的域名补全，换域名不用重新构建。
+const API_BASE = new URL(
   (import.meta.env.VITE_API_BASE as string | undefined) ??
-  "http://localhost:8787";
+    "http://localhost:8787",
+  window.location.origin,
+)
+  .toString()
+  .replace(/\/$/, "");
 
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);

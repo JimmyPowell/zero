@@ -1176,6 +1176,14 @@ export function buildPrompt(
   return L.join("\n");
 }
 
+// claude 的启动前缀：本机经包装器调 Claude Code 时（如 `hicc run` 负责拉起本地模型代理并注入代理 env），
+// 设 ZERO_CLAUDE_LAUNCHER="hicc run" → 实际执行 `hicc run claude -p ...`。未设则直接调 claude。
+// 只作用于 claude；codebuddy / tclaude 各走各的网关，不受影响。
+function launcherPrefix(bin: string): string[] {
+  const v = bin === "claude" ? process.env.ZERO_CLAUDE_LAUNCHER?.trim() : "";
+  return v ? v.split(/\s+/) : [];
+}
+
 // 跑 Claude 系无头 CLI（claude / codebuddy —— stream-json 同构，复用同一逻辑+adapter）：
 // 逐行解析 stream-json，经 adapter 规范化后通过 reporter 实时上报执行流；
 // 返回最终文本 + 会话 id（供 complete 回传）。bin 决定调哪个二进制。
@@ -1200,6 +1208,7 @@ async function runClaudeLike(
   usage?: RunUsage | null;
 }> {
   const cmd = [
+    ...launcherPrefix(bin),
     bin,
     "-p",
     "--output-format",
