@@ -11,6 +11,7 @@ import {
 } from "@/middleware/workspace";
 import { getMembership } from "@/lib/access";
 import { generateToken, hashToken } from "@/lib/token";
+import { callRuntime } from "@/lib/runtime-rpc";
 
 // 心跳新鲜窗口：60s 内有心跳算在线
 const ONLINE_WINDOW_MS = 60_000;
@@ -171,6 +172,39 @@ export const runtimeRoutes = new Hono<WorkspaceEnv>()
       },
       201,
     );
+  })
+  // 浏览执行机目录（选「工作目录就地」用）：经 daemon 长轮询中继到运行时那台机器上列子目录。
+  // 只返回目录名；可见性与详情一致（看不到的运行时一律 404）。
+  .get("/:id/fs", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const userId = c.get("user").sub;
+    const [rt] = await db
+      .select()
+      .from(schema.runtime)
+      .where(
+        and(
+          eq(schema.runtime.id, c.req.param("id")),
+          visibleWhere(workspaceId, userId),
+        ),
+      )
+      .limit(1);
+    if (!rt) return c.json({ error: "运行时不存在或无权访问" }, 404);
+    if (!online(rt.lastHeartbeatAt))
+      return c.json({ error: "运行时离线，请先启动它的 daemon" }, 409);
+
+    const r = await callRuntime(rt.id, "fs.list", {
+      path: c.req.query("path") ?? "",
+      hidden: c.req.query("hidden") === "1",
+    });
+    if (!r.ok) {
+      return r.error === "timeout"
+        ? c.json(
+            { error: "运行时没有响应（daemon 版本过旧或网络中断，重启 daemon 可更新）" },
+            504,
+          )
+        : c.json({ error: r.error }, 400);
+    }
+    return c.json(r.data as Record<string, unknown>);
   })
   // 详情：基本信息 + owner + 触达范围 + 本空间绑定的 agent + 用量/成本汇总
   .get("/:id", async (c) => {

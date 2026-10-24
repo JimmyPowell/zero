@@ -485,6 +485,16 @@ export interface Runtime {
   createdAt: string;
 }
 
+// 执行机目录浏览结果（经 daemon 中继，只含子目录名）
+export interface RuntimeDirListing {
+  path: string;
+  parent: string | null;
+  home: string;
+  isRepo: boolean;
+  truncated: boolean;
+  entries: { name: string; isRepo: boolean }[];
+}
+
 export interface RuntimeReachWorkspace {
   id: string;
   name: string;
@@ -995,6 +1005,20 @@ export const api = {
   // ---- 运行时 ----
   listRuntimes: (workspaceId: string) =>
     request<{ runtimes: Runtime[] }>(`/workspaces/${workspaceId}/runtimes`),
+
+  // 浏览运行时所在机器的目录（path 空 = 主目录；hidden 显示 . 开头的目录）
+  browseRuntimeDir: (
+    workspaceId: string,
+    runtimeId: string,
+    path: string,
+    hidden = false,
+  ) => {
+    const qs = new URLSearchParams({ path });
+    if (hidden) qs.set("hidden", "1");
+    return request<RuntimeDirListing>(
+      `/workspaces/${workspaceId}/runtimes/${runtimeId}/fs?${qs.toString()}`,
+    );
+  },
 
   createRuntime: (workspaceId: string, payload: CreateRuntimePayload) =>
     request<{ runtime: Runtime; token: string }>(

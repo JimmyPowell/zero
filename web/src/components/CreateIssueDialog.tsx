@@ -314,6 +314,11 @@ export function CreateIssueDialog({
           <BindingPicker
             workspaceId={workspaceId}
             value={binding}
+            runtimeId={
+              assignee?.type === "agent"
+                ? agents.find((x) => x.id === assignee.id)?.runtimeId
+                : null
+            }
             onChange={setBinding}
           />
         </div>

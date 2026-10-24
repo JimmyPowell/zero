@@ -18,6 +18,7 @@ import {
   DropdownMenuCheck,
 } from "@/components/ui/dropdown-menu";
 import { CreateRepoDialog } from "@/components/CreateRepoDialog";
+import { FolderBrowserDialog } from "./FolderBrowserDialog";
 import { cn } from "@/lib/utils";
 import { useUi } from "@/lib/ui-store";
 import { api, type Repo } from "@/lib/api-client";
@@ -36,11 +37,14 @@ export function BindingPicker({
   workspaceId,
   value,
   issueNumber,
+  runtimeId,
   onChange,
 }: {
   workspaceId: string;
   value: BindingValue;
   issueNumber?: number;
+  // 指派的智能体所绑运行时：「浏览」默认看那台机器的目录
+  runtimeId?: string | null;
   onChange: (v: BindingValue) => void;
 }) {
   const { t } = useUi();
@@ -48,7 +52,7 @@ export function BindingPicker({
   const [addOpen, setAddOpen] = useState(false);
   const [dirEditing, setDirEditing] = useState(false);
   const [dirDraft, setDirDraft] = useState("");
-  const [browseErr, setBrowseErr] = useState(false);
+  const [browseOpen, setBrowseOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -76,23 +80,6 @@ export function BindingPicker({
     const p = (path ?? dirDraft).trim();
     if (p && !(value.kind === "dir" && value.workDir === p)) {
       onChange({ kind: "dir", workDir: p });
-    }
-  }
-
-  // 调本机 daemon 的本地选择器，弹原生文件夹对话框 → 回填并立即提交
-  async function browseFolder() {
-    setBrowseErr(false);
-    try {
-      const res = await fetch("http://127.0.0.1:8799/pick-folder", {
-        signal: AbortSignal.timeout(180000),
-      });
-      const data = (await res.json()) as { path: string | null };
-      if (data.path) {
-        setDirDraft(data.path);
-        commitDir(data.path); // 选完即生效，无需再点确定
-      }
-    } catch {
-      setBrowseErr(true);
     }
   }
 
@@ -201,17 +188,12 @@ export function BindingPicker({
             <button
               type="button"
               title={t("binding.browse")}
-              onClick={browseFolder}
+              onClick={() => setBrowseOpen(true)}
               className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
             >
               <FolderSearch className="size-4" />
             </button>
           </div>
-          {browseErr && (
-            <p className="text-[11px] text-muted-foreground">
-              {t("binding.browseErr")}
-            </p>
-          )}
         </div>
       )}
 
@@ -233,6 +215,20 @@ export function BindingPicker({
             ? t("binding.inPlaceHint")
             : t("binding.emptyHint")}
       </p>
+
+      {/* 浏览执行机目录（经 server 中继到 daemon）→ 选完回填并立即提交 */}
+      <FolderBrowserDialog
+        open={browseOpen}
+        workspaceId={workspaceId}
+        preferredRuntimeId={runtimeId}
+        initialPath={dirDraft}
+        onClose={() => setBrowseOpen(false)}
+        onPick={(p) => {
+          setBrowseOpen(false);
+          setDirDraft(p);
+          commitDir(p);
+        }}
+      />
 
       <CreateRepoDialog
         open={addOpen}
