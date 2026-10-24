@@ -101,8 +101,13 @@ export const authActions = {
     const { token, user } = await api.login(email, password);
     await afterAuth(token, user);
   },
-  async register(email: string, password: string, name?: string) {
-    const { token, user } = await api.register(email, password, name);
+  async register(
+    email: string,
+    password: string,
+    name?: string,
+    inviteToken?: string,
+  ) {
+    const { token, user } = await api.register(email, password, name, inviteToken);
     await afterAuth(token, user);
   },
   logout() {

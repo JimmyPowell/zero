@@ -27,6 +27,18 @@ function inviteState(inv: schema.WorkspaceInvite): {
   return { valid: true };
 }
 
+// 按明文 token 查一条当前有效的邀请（关闭开放注册时，注册凭它放行）
+export async function findValidInvite(
+  token: string,
+): Promise<schema.WorkspaceInvite | null> {
+  const [inv] = await db
+    .select()
+    .from(schema.workspaceInvite)
+    .where(eq(schema.workspaceInvite.tokenHash, hashToken(token)))
+    .limit(1);
+  return inv && inviteState(inv).valid ? inv : null;
+}
+
 // 邀请列表项：绝不回传 token（只在创建时给一次）。status 便于前端标注。
 function shapeInvite(
   inv: schema.WorkspaceInvite,
