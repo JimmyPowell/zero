@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, type FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useUi } from "@/lib/ui-store";
 import { useAuth } from "@/lib/auth-store";
-import { ApiError } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 
 type Mode = "login" | "register";
 
@@ -13,6 +13,26 @@ export function AuthView() {
   const { t } = useUi();
   const { login, register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // 从邀请链接跳来（/invite/<token>）：关闭开放注册时凭这个 token 仍可注册
+  const from = (location.state as { from?: string } | null)?.from;
+  const inviteToken = from?.match(/^\/invite\/([^/?#]+)/)?.[1];
+
+  // 是否开放注册（null = 加载中；取不到按开放处理，最终以服务端校验为准）
+  const [registrationOpen, setRegistrationOpen] = useState<boolean | null>(
+    null,
+  );
+  useEffect(() => {
+    let alive = true;
+    void api
+      .authConfig()
+      .then((r) => alive && setRegistrationOpen(r.registrationOpen))
+      .catch(() => alive && setRegistrationOpen(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const canRegister = registrationOpen !== false || !!inviteToken;
 
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -29,7 +49,12 @@ export function AuthView() {
       if (mode === "login") {
         await login(email, password);
       } else {
-        await register(email, password, name.trim() || undefined);
+        await register(
+          email,
+          password,
+          name.trim() || undefined,
+          inviteToken,
+        );
       }
       navigate("/", { replace: true });
     } catch (err) {
@@ -121,16 +146,24 @@ export function AuthView() {
             </Button>
           </form>
 
-          <button
-            type="button"
-            className="mt-4 w-full text-center text-sm text-active-fg hover:underline"
-            onClick={() => {
-              setMode((m) => (m === "login" ? "register" : "login"));
-              setError(null);
-            }}
-          >
-            {mode === "login" ? t("auth.toRegister") : t("auth.toLogin")}
-          </button>
+          {canRegister ? (
+            <button
+              type="button"
+              className="mt-4 w-full text-center text-sm text-active-fg hover:underline"
+              onClick={() => {
+                setMode((m) => (m === "login" ? "register" : "login"));
+                setError(null);
+              }}
+            >
+              {mode === "login" ? t("auth.toRegister") : t("auth.toLogin")}
+            </button>
+          ) : (
+            registrationOpen === false && (
+              <p className="mt-4 text-center text-xs text-muted-foreground">
+                {t("auth.registrationClosed")}
+              </p>
+            )
+          )}
         </div>
       </div>
     </div>

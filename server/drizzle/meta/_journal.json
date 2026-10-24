@@ -204,6 +204,13 @@
       "when": 1783739473984,
       "tag": "0028_rare_serpent_society",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "5",
+      "when": 1792812975211,
+      "tag": "0029_registration_switch",
+      "breakpoints": true
     }
   ]
 }

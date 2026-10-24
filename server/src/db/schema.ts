@@ -22,7 +22,21 @@ export const user = mysqlTable("user", {
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   avatarUrl: text("avatar_url"),
+  // 系统管理员（全站级，区别于工作空间 owner/admin）：可改 system_setting（如开放注册）。
+  // 迁移时把最早注册的用户设为 1；之后可直接改库。
+  isAdmin: int("is_admin").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+});
+
+// 全站级配置（键值）：value 为 JSON。无记录 = 用代码里的默认值（见 lib/system-settings.ts）。
+// 直接改库即生效（读时不缓存），例：registration_open = false 关闭开放注册。
+export const systemSetting = mysqlTable("system_setting", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: json("value").notNull(),
+  updatedBy: char("updated_by", { length: 36 }).references(() => user.id, {
+    onDelete: "set null",
+  }),
   updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
 });
 
@@ -835,6 +849,7 @@ export const kbDoc = mysqlTable(
 );
 
 export type User = typeof user.$inferSelect;
+export type SystemSetting = typeof systemSetting.$inferSelect;
 export type Workspace = typeof workspace.$inferSelect;
 export type Member = typeof member.$inferSelect;
 export type WorkspaceInvite = typeof workspaceInvite.$inferSelect;

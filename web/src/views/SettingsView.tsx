@@ -8,6 +8,7 @@ import {
   Trash2,
   Copy,
   Check,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -48,7 +49,7 @@ function Switch({
     >
       <span
         className={cn(
-          "absolute top-0.5 size-5 rounded-full bg-white shadow transition-transform",
+          "absolute left-0 top-0.5 size-5 rounded-full bg-white shadow transition-transform",
           checked ? "translate-x-[22px]" : "translate-x-0.5",
         )}
       />
@@ -593,6 +594,78 @@ function SmtpServerCard({ wsId }: { wsId: string | null }) {
   );
 }
 
+// 系统（全站级）设置：仅系统管理员可见。目前只有「开放注册」开关，切换即保存。
+function SystemSection() {
+  const { t } = useUi();
+  const [registrationOpen, setRegistrationOpen] = useState<boolean | null>(
+    null,
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getSystemSettings()
+      .then((r) => alive && setRegistrationOpen(r.settings.registrationOpen))
+      .catch((err) => {
+        if (!alive) return;
+        setError(err instanceof ApiError ? err.message : "网络错误，请重试");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function toggle(open: boolean) {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await api.updateSystemSettings({ registrationOpen: open });
+      setRegistrationOpen(r.settings.registrationOpen);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "网络错误，请重试");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="mt-8 flex items-center gap-2">
+        <ShieldCheck className="size-4 text-muted-foreground" />
+        <h3 className="text-sm font-medium text-foreground">
+          {t("settings.systemTitle")}
+        </h3>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {t("settings.systemDesc")}
+      </p>
+      <div className="mt-4 rounded-xl border border-border bg-card p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              {t("settings.registrationOpen")}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {registrationOpen === false
+                ? t("settings.registrationClosedHint")
+                : t("settings.registrationOpenHint")}
+            </p>
+          </div>
+          {registrationOpen === null ? (
+            <div className="h-6 w-11 animate-pulse rounded-full bg-muted/50" />
+          ) : (
+            <Switch checked={registrationOpen} onChange={(v) => void toggle(v)} />
+          )}
+        </div>
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      </div>
+    </>
+  );
+}
+
 export function SettingsView() {
   const { t } = useUi();
   const { currentWorkspace, user } = useAuth();
@@ -706,6 +779,8 @@ export function SettingsView() {
         <p className="mt-3 text-xs text-muted-foreground/70">
           {t("settings.moreSoon")}
         </p>
+
+        {user?.isAdmin && <SystemSection />}
       </div>
     </Panel>
   );

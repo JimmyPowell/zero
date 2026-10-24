@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 
 import { config } from "@/config";
 import { authRoutes } from "@/routes/auth";
+import { systemRoutes } from "@/routes/system";
 import { workspaceRoutes } from "@/routes/workspaces";
 import { workspaceInviteRoutes, inviteAcceptRoutes } from "@/routes/invites";
 import { issueRoutes } from "@/routes/issues";
@@ -41,6 +42,7 @@ app.use(
 app.get("/health", (c) => c.json({ ok: true }));
 
 app.route("/auth", authRoutes);
+app.route("/system", systemRoutes);
 app.route("/workspaces", workspaceRoutes);
 app.route("/workspaces/:wsId/invites", workspaceInviteRoutes);
 app.route("/invites", inviteAcceptRoutes);

@@ -135,6 +135,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "auth.toRegister": "还没有账号？去注册",
     "auth.toLogin": "已有账号？去登录",
     "auth.submitting": "提交中…",
+    "auth.registrationClosed": "当前未开放注册，请通过邀请链接加入",
     "ws.createTitle": "创建工作空间",
     "ws.createDesc": "工作空间用于隔离你的需求、运行时与智能体。",
     "ws.namePh": "为工作空间起个名字",
@@ -406,6 +407,11 @@ const messages: Record<Locale, Record<string, string>> = {
     // 设置 / 通知
     "menu.settings": "设置",
     "settings.title": "设置",
+    "settings.systemTitle": "系统",
+    "settings.systemDesc": "全站级设置，仅系统管理员可见，影响所有工作空间。",
+    "settings.registrationOpen": "开放注册",
+    "settings.registrationOpenHint": "任何人都能在登录页自行注册账号",
+    "settings.registrationClosedHint": "已关闭：只能通过工作空间的邀请链接注册加入",
     "settings.notifTitle": "通知",
     "settings.notifDesc":
       "需求创建、智能体执行完成时，把通知推送到你的渠道。",
@@ -703,6 +709,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "auth.toRegister": "No account? Sign up",
     "auth.toLogin": "Have an account? Sign in",
     "auth.submitting": "Submitting…",
+    "auth.registrationClosed": "Sign-up is closed. Join via an invite link.",
     "ws.createTitle": "Create workspace",
     "ws.createDesc": "Workspaces isolate your requirements, runtimes and agents.",
     "ws.namePh": "Name your workspace",
@@ -962,6 +969,11 @@ const messages: Record<Locale, Record<string, string>> = {
     // Settings / notifications
     "menu.settings": "Settings",
     "settings.title": "Settings",
+    "settings.systemTitle": "System",
+    "settings.systemDesc": "Site-wide settings. Visible to system admins only; affects all workspaces.",
+    "settings.registrationOpen": "Open sign-up",
+    "settings.registrationOpenHint": "Anyone can create an account from the sign-in page",
+    "settings.registrationClosedHint": "Closed: people can only join through a workspace invite link",
     "settings.notifTitle": "Notifications",
     "settings.notifDesc":
       "Push notifications to your channels when an issue is created or an agent finishes.",

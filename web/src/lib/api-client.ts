@@ -60,6 +60,12 @@ export interface AuthUser {
   email: string;
   name: string;
   avatarUrl: string | null;
+  isAdmin?: boolean; // 系统管理员（全站开关，如开放注册）
+}
+
+// 全站级设置（仅系统管理员可读写）
+export interface SystemSettings {
+  registrationOpen: boolean;
 }
 
 export interface Workspace {
@@ -684,10 +690,27 @@ interface AuthResponse {
 
 // ---- 接口方法 ----
 export const api = {
-  register: (email: string, password: string, name?: string) =>
+  register: (
+    email: string,
+    password: string,
+    name?: string,
+    inviteToken?: string,
+  ) =>
     request<AuthResponse>("/auth/register", {
       method: "POST",
-      body: { email, password, name },
+      body: { email, password, name, inviteToken },
+    }),
+
+  // 公开配置：是否开放注册（登录页用）
+  authConfig: () => request<{ registrationOpen: boolean }>("/auth/config"),
+
+  getSystemSettings: () =>
+    request<{ settings: SystemSettings }>("/system/settings"),
+
+  updateSystemSettings: (patch: Partial<SystemSettings>) =>
+    request<{ settings: SystemSettings }>("/system/settings", {
+      method: "PATCH",
+      body: patch,
     }),
 
   login: (email: string, password: string) =>
