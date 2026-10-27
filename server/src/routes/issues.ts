@@ -1191,6 +1191,9 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     const id = c.req.param("id");
     const taskId = c.req.param("taskId");
     const TERMINAL = ["succeeded", "failed", "cancelled"];
+    // 心跳必须明显短于 Bun.serve 默认 10s 空闲超时（idleTimeout）：否则 agent 安静超过 10s
+    // （跑长命令/长思考）连接就被 Bun 掐断，EventSource 反复重连、每次都重走 backlog 查询。
+    const HEARTBEAT_MS = 5_000;
     const [tk] = await db
       .select({ id: schema.task.id, status: schema.task.status })
       .from(schema.task)
@@ -1304,13 +1307,13 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
             }
           }
           if (closed) break;
-          // 等下一条事件，或 15s 心跳
+          // 等下一条事件，或心跳到点
           await Promise.race([
             new Promise<void>((r) => {
               wake = r;
               if (queue.length || closed) r();
             }),
-            stream.sleep(15000),
+            stream.sleep(HEARTBEAT_MS),
           ]);
           wake = null;
           if (queue.length === 0 && !closed) {
