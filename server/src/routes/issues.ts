@@ -1208,9 +1208,17 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     if (!tk) return c.json({ error: "运行不存在" }, 404);
 
     return streamSSE(c, async (stream) => {
-      const lastId = c.req.header("Last-Event-ID");
-      let after = Number(c.req.query("after") ?? lastId ?? -1);
-      if (!Number.isFinite(after)) after = -1;
+      // 续传起点取 ?after 与 Last-Event-ID 的较大者：EventSource 自动重连时 URL 不变
+      // （after 仍是首次打开时的值），只有 Last-Event-ID 头会前进；若让 after 优先，
+      // 每次重连都会把打开以来的事件全量重放一遍（前端按 seq 去重，界面看不出来）。
+      const seqOf = (s?: string) => {
+        const n = s?.trim() ? Number(s) : NaN;
+        return Number.isFinite(n) ? n : -1;
+      };
+      const after = Math.max(
+        seqOf(c.req.query("after")),
+        seqOf(c.req.header("Last-Event-ID")),
+      );
       let lastSeq = after;
 
       // 实时事件先入队，待 backlog 发完再放，避免乱序 / 重复
