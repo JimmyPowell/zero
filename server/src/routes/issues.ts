@@ -1235,64 +1235,65 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         wake?.();
       });
 
-      // 1) 补齐 backlog
-      const backlog = await db
-        .select({
-          id: schema.runEvent.id,
-          seq: schema.runEvent.seq,
-          type: schema.runEvent.type,
-          tool: schema.runEvent.tool,
-          toolName: schema.runEvent.toolName,
-          toolUseId: schema.runEvent.toolUseId,
-          parentToolUseId: schema.runEvent.parentToolUseId,
-          text: schema.runEvent.text,
-          detail: schema.runEvent.detail,
-        })
-        .from(schema.runEvent)
-        .where(
-          and(
-            eq(schema.runEvent.taskId, taskId),
-            after >= 0 ? gt(schema.runEvent.seq, after) : undefined,
-          ),
-        )
-        .orderBy(asc(schema.runEvent.seq));
-      for (const ev of backlog) {
-        await stream.writeSSE({
-          id: String(ev.seq),
-          event: "run",
-          data: JSON.stringify(ev),
-        });
-        lastSeq = ev.seq;
-      }
-
-      // 连上时已是终态：排空实时队列后直接收尾，不空挂连接 15s。
-      // （complete 在 reporter.flush() 之后才置终态，故终态时事件必已全部到达）
-      const [initial] = await db
-        .select({ status: schema.task.status })
-        .from(schema.task)
-        .where(eq(schema.task.id, taskId))
-        .limit(1);
-      if (initial && TERMINAL.includes(initial.status)) {
-        while (queue.length) {
-          const ev = queue.shift()!;
-          if (ev.seq != null && ev.seq > lastSeq) {
-            await stream.writeSSE({
-              id: String(ev.seq),
-              event: "run",
-              data: JSON.stringify(ev as Record<string, unknown>),
-            });
-            lastSeq = ev.seq;
-          }
-        }
-        await stream.writeSSE({
-          event: "end",
-          data: JSON.stringify({ status: initial.status, lastSeq }),
-        });
-        unsub();
-        return;
-      }
-
+      // 订阅之后的一切（含 backlog 查询）都必须在 try 里：任何一步抛错（DB 抖动/连接池耗尽）
+      // 都要走 finally 退订，否则 listener 永久留在 run-bus，还会继续囤积该 task 后续的全部事件。
       try {
+        // 1) 补齐 backlog
+        const backlog = await db
+          .select({
+            id: schema.runEvent.id,
+            seq: schema.runEvent.seq,
+            type: schema.runEvent.type,
+            tool: schema.runEvent.tool,
+            toolName: schema.runEvent.toolName,
+            toolUseId: schema.runEvent.toolUseId,
+            parentToolUseId: schema.runEvent.parentToolUseId,
+            text: schema.runEvent.text,
+            detail: schema.runEvent.detail,
+          })
+          .from(schema.runEvent)
+          .where(
+            and(
+              eq(schema.runEvent.taskId, taskId),
+              after >= 0 ? gt(schema.runEvent.seq, after) : undefined,
+            ),
+          )
+          .orderBy(asc(schema.runEvent.seq));
+        for (const ev of backlog) {
+          await stream.writeSSE({
+            id: String(ev.seq),
+            event: "run",
+            data: JSON.stringify(ev),
+          });
+          lastSeq = ev.seq;
+        }
+
+        // 连上时已是终态：排空实时队列后直接收尾，不空挂连接等下一拍心跳。
+        // （complete 在 reporter.flush() 之后才置终态，故终态时事件必已全部到达）
+        const [initial] = await db
+          .select({ status: schema.task.status })
+          .from(schema.task)
+          .where(eq(schema.task.id, taskId))
+          .limit(1);
+        if (initial && TERMINAL.includes(initial.status)) {
+          while (queue.length) {
+            const ev = queue.shift()!;
+            if (ev.seq != null && ev.seq > lastSeq) {
+              await stream.writeSSE({
+                id: String(ev.seq),
+                event: "run",
+                data: JSON.stringify(ev as Record<string, unknown>),
+              });
+              lastSeq = ev.seq;
+            }
+          }
+          await stream.writeSSE({
+            event: "end",
+            data: JSON.stringify({ status: initial.status, lastSeq }),
+          });
+          return;
+        }
+
         while (!closed) {
           // 排空实时队列（跳过 backlog 已发的 seq）
           while (queue.length) {
