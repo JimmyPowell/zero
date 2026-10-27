@@ -1191,6 +1191,9 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     const id = c.req.param("id");
     const taskId = c.req.param("taskId");
     const TERMINAL = ["succeeded", "failed", "cancelled"];
+    // 心跳必须明显短于 Bun.serve 默认 10s 空闲超时（idleTimeout）：否则 agent 安静超过 10s
+    // （跑长命令/长思考）连接就被 Bun 掐断，EventSource 反复重连、每次都重走 backlog 查询。
+    const HEARTBEAT_MS = 5_000;
     const [tk] = await db
       .select({ id: schema.task.id, status: schema.task.status })
       .from(schema.task)
@@ -1205,9 +1208,17 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
     if (!tk) return c.json({ error: "运行不存在" }, 404);
 
     return streamSSE(c, async (stream) => {
-      const lastId = c.req.header("Last-Event-ID");
-      let after = Number(c.req.query("after") ?? lastId ?? -1);
-      if (!Number.isFinite(after)) after = -1;
+      // 续传起点取 ?after 与 Last-Event-ID 的较大者：EventSource 自动重连时 URL 不变
+      // （after 仍是首次打开时的值），只有 Last-Event-ID 头会前进；若让 after 优先，
+      // 每次重连都会把打开以来的事件全量重放一遍（前端按 seq 去重，界面看不出来）。
+      const seqOf = (s?: string) => {
+        const n = s?.trim() ? Number(s) : NaN;
+        return Number.isFinite(n) ? n : -1;
+      };
+      const after = Math.max(
+        seqOf(c.req.query("after")),
+        seqOf(c.req.header("Last-Event-ID")),
+      );
       let lastSeq = after;
 
       // 实时事件先入队，待 backlog 发完再放，避免乱序 / 重复
@@ -1224,64 +1235,65 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
         wake?.();
       });
 
-      // 1) 补齐 backlog
-      const backlog = await db
-        .select({
-          id: schema.runEvent.id,
-          seq: schema.runEvent.seq,
-          type: schema.runEvent.type,
-          tool: schema.runEvent.tool,
-          toolName: schema.runEvent.toolName,
-          toolUseId: schema.runEvent.toolUseId,
-          parentToolUseId: schema.runEvent.parentToolUseId,
-          text: schema.runEvent.text,
-          detail: schema.runEvent.detail,
-        })
-        .from(schema.runEvent)
-        .where(
-          and(
-            eq(schema.runEvent.taskId, taskId),
-            after >= 0 ? gt(schema.runEvent.seq, after) : undefined,
-          ),
-        )
-        .orderBy(asc(schema.runEvent.seq));
-      for (const ev of backlog) {
-        await stream.writeSSE({
-          id: String(ev.seq),
-          event: "run",
-          data: JSON.stringify(ev),
-        });
-        lastSeq = ev.seq;
-      }
-
-      // 连上时已是终态：排空实时队列后直接收尾，不空挂连接 15s。
-      // （complete 在 reporter.flush() 之后才置终态，故终态时事件必已全部到达）
-      const [initial] = await db
-        .select({ status: schema.task.status })
-        .from(schema.task)
-        .where(eq(schema.task.id, taskId))
-        .limit(1);
-      if (initial && TERMINAL.includes(initial.status)) {
-        while (queue.length) {
-          const ev = queue.shift()!;
-          if (ev.seq != null && ev.seq > lastSeq) {
-            await stream.writeSSE({
-              id: String(ev.seq),
-              event: "run",
-              data: JSON.stringify(ev as Record<string, unknown>),
-            });
-            lastSeq = ev.seq;
-          }
-        }
-        await stream.writeSSE({
-          event: "end",
-          data: JSON.stringify({ status: initial.status, lastSeq }),
-        });
-        unsub();
-        return;
-      }
-
+      // 订阅之后的一切（含 backlog 查询）都必须在 try 里：任何一步抛错（DB 抖动/连接池耗尽）
+      // 都要走 finally 退订，否则 listener 永久留在 run-bus，还会继续囤积该 task 后续的全部事件。
       try {
+        // 1) 补齐 backlog
+        const backlog = await db
+          .select({
+            id: schema.runEvent.id,
+            seq: schema.runEvent.seq,
+            type: schema.runEvent.type,
+            tool: schema.runEvent.tool,
+            toolName: schema.runEvent.toolName,
+            toolUseId: schema.runEvent.toolUseId,
+            parentToolUseId: schema.runEvent.parentToolUseId,
+            text: schema.runEvent.text,
+            detail: schema.runEvent.detail,
+          })
+          .from(schema.runEvent)
+          .where(
+            and(
+              eq(schema.runEvent.taskId, taskId),
+              after >= 0 ? gt(schema.runEvent.seq, after) : undefined,
+            ),
+          )
+          .orderBy(asc(schema.runEvent.seq));
+        for (const ev of backlog) {
+          await stream.writeSSE({
+            id: String(ev.seq),
+            event: "run",
+            data: JSON.stringify(ev),
+          });
+          lastSeq = ev.seq;
+        }
+
+        // 连上时已是终态：排空实时队列后直接收尾，不空挂连接等下一拍心跳。
+        // （complete 在 reporter.flush() 之后才置终态，故终态时事件必已全部到达）
+        const [initial] = await db
+          .select({ status: schema.task.status })
+          .from(schema.task)
+          .where(eq(schema.task.id, taskId))
+          .limit(1);
+        if (initial && TERMINAL.includes(initial.status)) {
+          while (queue.length) {
+            const ev = queue.shift()!;
+            if (ev.seq != null && ev.seq > lastSeq) {
+              await stream.writeSSE({
+                id: String(ev.seq),
+                event: "run",
+                data: JSON.stringify(ev as Record<string, unknown>),
+              });
+              lastSeq = ev.seq;
+            }
+          }
+          await stream.writeSSE({
+            event: "end",
+            data: JSON.stringify({ status: initial.status, lastSeq }),
+          });
+          return;
+        }
+
         while (!closed) {
           // 排空实时队列（跳过 backlog 已发的 seq）
           while (queue.length) {
@@ -1304,13 +1316,13 @@ export const issueRoutes = new Hono<WorkspaceEnv>()
             }
           }
           if (closed) break;
-          // 等下一条事件，或 15s 心跳
+          // 等下一条事件，或心跳到点
           await Promise.race([
             new Promise<void>((r) => {
               wake = r;
               if (queue.length || closed) r();
             }),
-            stream.sleep(15000),
+            stream.sleep(HEARTBEAT_MS),
           ]);
           wake = null;
           if (queue.length === 0 && !closed) {
